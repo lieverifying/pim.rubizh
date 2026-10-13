@@ -10727,7 +10727,7 @@ function finalWireProduct(p){
  return out;
 }
 function finalExplicitHideIds(published){
- return Object.keys(published||{}).filter(id=>{const p=S.products.get(id);return p&&(p.archived||finalOwnerUnpublished(p));}).sort();
+ return Object.keys(published||{}).filter(id=>{const p=S.products.get(id);return p&&(p.archived||finalOwnerUnpublished(p)||finalDecision(p).state!=='READY');}).sort();
 }
 function pimSiteWire({published={}}={}){
  if(!classificationEnabled())throw Error('CONTRACT_V3_REQUIRES_CLASSIFICATION: сначала выполните импорт с классификацией');

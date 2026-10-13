@@ -63,11 +63,35 @@ test('decision: unconfirmed category and unknown color go to MODERATION, not REJ
  assert.equal(h.run('finalDecision(S.products.get("p-a")).state'),'MODERATION');assert.equal(h.run('finalDecision(S.products.get("p-a")).reasons[0].code'),'category');
  assert.ok(h.run('finalQueue().some(t=>t.kind==="category"&&t.ids.includes("p-a"))'));
 });
-test('explicit hide only: archived published model is hidden; MODERATION or absence is never a hide',()=>{
+test('explicit hide: known published models leaving READY are hidden; absence is never a hide',()=>{
  const h=setup(),published={'p-a':{hidden:false},'p-gone':{hidden:false}};h.ctx.published=published;
  h.run('const p=S.products.get("p-a");p.canonical_category_id=null;p.category_locked=false;bumpData()');
- assert.deepEqual(JSON.parse(JSON.stringify(h.run('pimSiteWire({published}).hide_ids'))),[]);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.run('pimSiteWire({published}).hide_ids'))),['p-a']);
  h.run('S.products.get("p-a").archived=true;bumpData()');assert.deepEqual(JSON.parse(JSON.stringify(h.run('pimSiteWire({published}).hide_ids'))),['p-a']);
+});
+test('PIMC-P1: published model losing photos emits a hide while preserving the product and its SKUs',()=>{
+ const h=setup();h.ctx.published={'p-a':{hidden:false},'p-gone':{hidden:false}};
+ assert.equal(h.run('finalDecision(S.products.get("p-a")).state'),'READY');
+ assert.deepEqual(wire(h).hide_ids,[]);
+ h.run('const p=S.products.get("p-a");p.photos=[];for(const v of p.variants){v.photos=[];v.offers["supplier-a"].photos=[];}bumpData()');
+ assert.equal(h.run('finalDecision(S.products.get("p-a")).state'),'REJECTED');
+ const out=JSON.parse(JSON.stringify(h.run('pimSiteWire({published})')));
+ assert.deepEqual(out.hide_ids,['p-a']);assert.deepEqual(out.products,[]);
+ assert.equal(h.run('S.products.get("p-a").archived'),false);
+ assert.equal(h.run('S.products.get("p-a").variants.length'),2);
+});
+test('PIMC-P1: category review causes a READY exit and recovery while unknown models stay untouched',()=>{
+ const h=setup();h.ctx.published={'p-a':{hidden:false},'p-gone':{hidden:false}};
+ const snapshot=()=>JSON.parse(JSON.stringify(h.run('pimSiteWire({published})')));
+ assert.deepEqual(snapshot().hide_ids,[]);assert.equal(snapshot().products.length,1);
+ h.run('S.products.get("p-a").canonical_category_id=null;S.products.get("p-a").category_locked=false;bumpData()');
+ assert.notEqual(h.run('finalDecision(S.products.get("p-a")).state'),'READY');
+ assert.deepEqual(snapshot().hide_ids,['p-a']);
+ h.ctx.published={'p-gone':{hidden:false}};assert.deepEqual(snapshot().hide_ids,[]);
+ h.ctx.published={'p-a':{hidden:false},'p-gone':{hidden:false}};
+ h.run('S.products.get("p-a").canonical_category_id="bags_backpacks";S.products.get("p-a").category_locked=true;bumpData()');
+ assert.equal(h.run('finalDecision(S.products.get("p-a")).state'),'READY');
+ assert.deepEqual(snapshot().hide_ids,[]);assert.equal(snapshot().products.length,1);
 });
 function mockSite(h,{caps=true,dropResult=false}={}){
  const calls=[];h.ctx.siteCall=async(url,opt)=>{calls.push({url,body:opt.body?JSON.parse(opt.body):null});const path=new URL(url).pathname;
