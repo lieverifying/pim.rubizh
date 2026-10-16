@@ -306,7 +306,7 @@ const finalFreshness=memoByData(()=>{
    const o=classificationSelectedOffer(p,v);if(!o?.sid){open=true;continue;}
    const cls=classificationFreshnessClass(p,v,o);if(cls===null){open=true;continue;}
    anyClass=true;if(cls!=='hidden')open=true;if(cls!=='fresh')aged=true;if(cls==='confirm'&&classificationInventory(o,v).availability_status==='IN_STOCK')lostPayment=true;
-   const age=classificationStockMetadata(o).stock_data_age_hours,prev=suppliers.get(o.sid);
+   const age=classificationStockMetadata(o).stock_data_age_hours,prev=suppliers.get(o.sid);if(age==null)continue;
    if(!prev||age>prev.age_hours)suppliers.set(o.sid,{sid:o.sid,name:S.cfg.suppliers.find(s=>s.id===o.sid)?.name||o.sid,age_hours:age,state:cls});
   }
   if(anyClass&&!open)hidden++;else if(aged&&lostPayment)confirm++;

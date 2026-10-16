@@ -64,3 +64,7 @@ test('a manually confirmed stock has no data age: no warning, never hidden',()=>
  const h=setup(20*24);h.run('S.products.get("p-a").variants[0].manualFields={stock:true};bumpData()');
  assert.equal(cls(h),null);assert.equal(variant(h).availability,'IN_STOCK');assert.equal(js(h,'finalFreshness()').blocked,false);
 });
+test('an offer without any data time is not «fresh» (fail closed, like SITE): counted as sold after the manager confirms',()=>{
+ const h=setup(1);h.run('Object.assign(S.products.get("p-a").variants[0].offers["supplier-a"],{at:null,imported_at:null,stock_observed_at:null});bumpData()');
+ assert.equal(cls(h),'confirm');assert.equal(js(h,'finalFreshness()').confirm_products,1);assert.equal(js(h,'finalFreshness()').blocked,false);
+});

@@ -27,6 +27,8 @@ PIM side (branch `hardening/stage-5.1-pim`):
 | `final-workflow` / `stage5-private-costs` / `stage5-remote-backup` mock SITE | capabilities without → with `freshness_policy_version: 1` | the real SITE now advertises it; PIM refuses a SITE that does not apply the rule (new test covers the refusal) |
 | `final-workflow` «committed exact wire fixture is byte-identical …» | unchanged test; fixture regenerated (`stock_imported_at: null` per SKU, `stock_warning_hours` 36 → 72) | the exporter output changed; SITE `contracts/pim-v3/2/wire.exact.json` is the same file |
 
-New: `final-workflow` «stage 5.1: the owner freshness policy travels in chunk 0 …».
+New: `final-workflow` «stage 5.1: the owner freshness policy travels in chunk 0 …»; `stage5-freshness` «an offer without any data time is not «fresh» (fail closed, like SITE)».
 
-Tests: 714/714 (`npm test`), npm audit 0. Release archive `rubizh-pim-10.9.3-final-workflow.zip` repacked in place (sha256 file updated).
+Security review (stage 5.1): no CRITICAL/HIGH. M3 (no data time = fresh forever) fixed on both sides: an offer without any data time is counted as sold after the manager confirms; SITE also treats a time more than a day ahead that way.
+
+Tests: 715/715 (`npm test`), npm audit 0. Release archive `rubizh-pim-10.9.3-final-workflow.zip` repacked in place (sha256 file updated).

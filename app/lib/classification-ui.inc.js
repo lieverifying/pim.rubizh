@@ -207,12 +207,13 @@ function classificationSelectedOffer(p,v,c=calc(p,v)){
  return selected?.sid&&v.offers?.[selected.sid]?{sid:selected.sid,...v.offers[selected.sid]}:selected;
 }
 function classificationManualStock(v){return !!(v?.manualFields?.stock||v?.manual_locks?.stock||v?.fieldMeta?.stock?.source==='manual'||v?.manualFields?.availability||v?.manual_locks?.availability);}
-// Data age class of a SKU under the owner's policy: fresh | confirm | hidden; null without data age or with manual stock.
+// Data age class of a SKU under the owner's policy: fresh | confirm | hidden; null without an offer or with manual stock.
 // Stage 5.1: PIM no longer downgrades stale stock at export (stage 5 PIMC-P2 exported it as UNKNOWN = not orderable);
 // SITE applies the same classes at every read, because the data keeps aging between the weekly publications.
 function classificationFreshnessClass(p,v,o=classificationSelectedOffer(p,v)){
- const age=o?classificationStockMetadata(o).stock_data_age_hours:null;
- if(age==null||classificationManualStock(v))return null;
+ if(!o||classificationManualStock(v))return null;
+ // Like SITE (fail closed): an offer without any data time is not «fresh» — sold after the manager confirms.
+ const age=classificationStockMetadata(o).stock_data_age_hours;if(age==null)return 'confirm';
  const policy=freshnessPolicy();return age<=policy.pay_fresh_hours?'fresh':age<=policy.sell_max_days*24?'confirm':'hidden';
 }
 function classificationAvailability(p,v){
