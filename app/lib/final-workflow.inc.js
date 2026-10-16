@@ -215,9 +215,38 @@ async function finalSiteFetch(path,opt={}){
  if(!r.ok||!j||j.ok===false)throw Error((j&&j.error)||('сайт ответил '+r.status));
  return j;
 }
+// Stage 5 (owner 2026-10-16): supplier data freshness before publication. Older than 24 h → warning; older than the
+// freshness limit (freshHours 36) → publication stops until the owner confirms, showing how many products lose availability.
+const finalFreshness=memoByData(()=>{
+ const suppliers=new Map();let unavailable=0;
+ for(const p of S.products.values()){
+  if(finalDecision(p).state!=='READY')continue;let lost=false;
+  for(const v of p.variants||[]){
+   const o=classificationSelectedOffer(p,v);if(!o?.sid)continue;const m=classificationStockMetadata(o),age=m.stock_data_age_hours;
+   if(age==null||age<=FRESH_WARN_HOURS)continue;
+   const state=m.stale_source?'block':'warn',prev=suppliers.get(o.sid);
+   if(!prev||age>prev.age_hours)suppliers.set(o.sid,{sid:o.sid,name:S.cfg.suppliers.find(s=>s.id===o.sid)?.name||o.sid,age_hours:age,state:prev?.state==='block'?'block':state});else if(state==='block')prev.state='block';
+   if(classificationStaleDowngrade(p,v,o))lost=true;
+  }
+  if(lost)unavailable++;
+ }
+ const list=[...suppliers.values()].sort((a,b)=>b.age_hours-a.age_hours);
+ return {warn_hours:FRESH_WARN_HOURS,block_hours:classificationFreshnessHours(null),suppliers:list,blocked:list.some(s=>s.state==='block'),unavailable_products:unavailable};
+});
+function finalFreshnessBlock({allowStale=false}={}){
+ const f=finalFreshness();if(!f.blocked||allowStale)return '';
+ return 'STALE_DATA: данные поставщиков старше '+f.block_hours+' ч ('+f.suppliers.filter(s=>s.state==='block').map(s=>s.name).join(', ')+'). Скільки товарів стане недоступними: '+f.unavailable_products+'. Обновите прайсы или подтвердите публикацию.';
+}
+function finalFreshnessNotice(){
+ const f=finalFreshness();if(!f.suppliers.length)return '';
+ const rows=f.suppliers.map(s=>'<li>'+esc(s.name)+': данные '+Math.floor(s.age_hours)+' ч назад'+(s.state==='block'?' — старше '+f.block_hours+' ч':' — старше '+f.warn_hours+' ч')+'</li>').join('');
+ if(!f.blocked)return '<section class="panel" role="status"><h2>Данные поставщиков старше '+f.warn_hours+' ч</h2><ul>'+rows+'</ul><p>Обновите прайсы. После '+f.block_hours+' ч товары этих поставщиков перестанут быть доступными для оплаты.</p></section>';
+ return '<section class="panel" role="alert"><h2>Публикация остановлена: данные старше '+f.block_hours+' ч</h2><ul>'+rows+'</ul><p><b>Скільки товарів стане недоступними: '+f.unavailable_products+'</b>. Их наличие уйдёт на сайт как «неизвестно» (оплата только после подтверждения менеджером).</p><button class="btn" data-final="publishStale">Опубликовать всё равно</button></section>';
+}
 function finalCapabilitiesOk(caps){return caps&&Object.entries(PIM_SITE_CONTRACT).filter(([k])=>k!=='envelope').every(([k,v])=>Number(caps[k])===v)&&caps.envelope==='products';}
-async function finalPublish(){
+async function finalPublish({allowStale=false}={}){
  if(!siteReady())throw Error('SYNC_DISABLED: укажите адрес API сайта и ключ PIM.');
+ const stale=finalFreshnessBlock({allowStale});if(stale)throw Error(stale);
  if(S.snap)throw Error('Сначала завершите или отмените импорт.');
  if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')throw Error('MIGRATION_PENDING: сначала завершите проверенную migration');
  const status=await finalSiteFetch('/pim/status');
@@ -251,9 +280,9 @@ async function finalPublish(){
  if(!await persist())throw Error('Ответ сайта получен, но локальное сохранение не завершено');
  FINAL_UI.hashes=hashes;return {batch_id:batchId,sent:changed.length,hidden:wire.hide_ids.length,errors:errors.length};
 }
-sitePublish=async function(mode,{silent=false}={}){
+sitePublish=async function(mode,{silent=false,allowStale=false}={}){
  if(classificationReviewMode())throw Error('REVIEW_ONLY: publication and /pim/sync disabled');
- try{const r=await finalPublish();if(!silent)toast(r.nothing?'На сайте всё актуально':'Сайт обновлён: моделей '+r.sent+', скрыто '+r.hidden+(r.errors?', ошибок '+r.errors:''));return r;}
+ try{const r=await finalPublish({allowStale});if(!silent)toast(r.nothing?'На сайте всё актуально':'Сайт обновлён: моделей '+r.sent+', скрыто '+r.hidden+(r.errors?', ошибок '+r.errors:''));return r;}
  catch(error){S.cfg.siteSync={...(S.cfg.siteSync||{}),lastError:error.message||String(error),lastErrorAt:Date.now()};S.cfgDirty=true;throw error;}
 };
 siteAutoTick=function(){return false;};
@@ -283,7 +312,7 @@ function vFinalReady(){
  const q=norm(FINAL_UI.q),tokens=searchTokens(FINAL_UI.q),list=[...S.products.values()].filter(p=>finalDecision(p).state==='READY'&&(!FINAL_UI.category||p.canonical_category_id===FINAL_UI.category)&&(!q||scoreProduct(p,tokens,q))&&(!FINAL_UI.availability||finalSummary(p).availability[FINAL_UI.availability]>0)).sort((a,b)=>pimCompare(finalTitle(a),finalTitle(b)));
  const cats=uniq([...S.products.values()].filter(p=>finalDecision(p).state==='READY').map(p=>p.canonical_category_id)).sort((a,b)=>pimCompare(canonicalPath(a),canonicalPath(b))),s=S.cfg.siteSync||{};
  const rows=list.slice(FINAL_UI.page*50,FINAL_UI.page*50+50).map(p=>{const x=finalSummary(p);return '<tr class="click" data-open="'+esc(p.id)+'"><td class="final-cover">'+(x.cover?'<img loading="lazy" alt="" src="'+esc(x.cover)+'">':'')+'</td><td><b>'+esc(finalTitle(p))+'</b><div class="small muted">'+esc(p.brand||'')+'</div></td><td class="small">'+esc(canonicalPath(p.canonical_category_id))+'</td><td>'+x.colors+'</td><td>'+x.skus+'</td><td>'+(x.min==null?'—':x.min===x.max?money(x.min):money(x.min)+' – '+money(x.max))+'</td><td class="small">'+esc(finalAvailabilityText(x.availability))+'</td><td class="small">'+esc(finalSyncState(p))+'</td></tr>';}).join('');
- return '<h1>На сайт</h1><p class="lead">Модели, готовые к публикации. Наличие влияет на возможность оплаты, а не убирает модель.</p>'+finalPricePolicyNotice()+'<section class="panel row final-actions"><button class="btn primary" data-final="publish" '+(siteReady()&&pricingProtected()?'':'disabled')+'>Отправить на сайт</button><span class="muted">Готово: '+finalCounts().READY+'</span>'+(s.at?'<span class="small muted">Последняя отправка: '+fmtDate(s.at)+(s.batch_id?' · '+esc(s.batch_id):'')+'</span>':'')+(s.lastError&&(s.lastErrorAt||0)>(s.at||0)?'<span class="small finance-bad">'+esc(s.lastError)+'</span>':'')+'</section><section class="panel row final-filters"><input id="finalQ" type="search" placeholder="Поиск по названию, SKU, бренду" value="'+esc(FINAL_UI.q)+'"><select id="finalCategory"><option value="">Все категории</option>'+cats.map(id=>'<option value="'+esc(id)+'" '+(FINAL_UI.category===id?'selected':'')+'>'+esc(canonicalPath(id))+'</option>').join('')+'</select><select id="finalAvailability"><option value="">Любое наличие</option>'+[['IN_STOCK','В наличии'],['PREORDER','Предзаказ'],['ORDER_ON_REQUEST','Под заказ'],['SIZE_CONFIRMATION_REQUIRED','Размер по запросу'],['UNKNOWN','Неизвестно'],['OUT_OF_STOCK','Нет в наличии']].map(([k,l])=>'<option value="'+k+'" '+(FINAL_UI.availability===k?'selected':'')+'>'+l+'</option>').join('')+'</select></section><div class="tablewrap"><table class="final-table"><thead><tr><th></th><th>Модель</th><th>Категория</th><th>Цвета</th><th>SKU</th><th>Цена</th><th>Наличие</th><th>Сайт</th></tr></thead><tbody>'+(rows||'<tr><td colspan="8">Нет моделей по фильтру.</td></tr>')+'</tbody></table></div>'+finalPager(list.length)+'<details class="panel"><summary>Подключение сайта</summary><div class="grid2"><label class="f">Адрес API сайта<input id="siteApiUrl" value="'+esc(siteCfg().url)+'" placeholder="https://rubizh.shop/api"></label><label class="f">Ключ PIM<input id="siteApiKey" type="password" value="'+esc(siteCfg().key)+'"></label></div><button class="btn" data-final="saveSite">Сохранить</button></details>';
+ return '<h1>На сайт</h1><p class="lead">Модели, готовые к публикации. Наличие влияет на возможность оплаты, а не убирает модель.</p>'+finalPricePolicyNotice()+finalFreshnessNotice()+'<section class="panel row final-actions"><button class="btn primary" data-final="publish" '+(siteReady()&&pricingProtected()?'':'disabled')+'>Отправить на сайт</button><span class="muted">Готово: '+finalCounts().READY+'</span>'+(s.at?'<span class="small muted">Последняя отправка: '+fmtDate(s.at)+(s.batch_id?' · '+esc(s.batch_id):'')+'</span>':'')+(s.lastError&&(s.lastErrorAt||0)>(s.at||0)?'<span class="small finance-bad">'+esc(s.lastError)+'</span>':'')+'</section><section class="panel row final-filters"><input id="finalQ" type="search" placeholder="Поиск по названию, SKU, бренду" value="'+esc(FINAL_UI.q)+'"><select id="finalCategory"><option value="">Все категории</option>'+cats.map(id=>'<option value="'+esc(id)+'" '+(FINAL_UI.category===id?'selected':'')+'>'+esc(canonicalPath(id))+'</option>').join('')+'</select><select id="finalAvailability"><option value="">Любое наличие</option>'+[['IN_STOCK','В наличии'],['PREORDER','Предзаказ'],['ORDER_ON_REQUEST','Под заказ'],['SIZE_CONFIRMATION_REQUIRED','Размер по запросу'],['UNKNOWN','Неизвестно'],['OUT_OF_STOCK','Нет в наличии']].map(([k,l])=>'<option value="'+k+'" '+(FINAL_UI.availability===k?'selected':'')+'>'+l+'</option>').join('')+'</select></section><div class="tablewrap"><table class="final-table"><thead><tr><th></th><th>Модель</th><th>Категория</th><th>Цвета</th><th>SKU</th><th>Цена</th><th>Наличие</th><th>Сайт</th></tr></thead><tbody>'+(rows||'<tr><td colspan="8">Нет моделей по фильтру.</td></tr>')+'</tbody></table></div>'+finalPager(list.length)+'<details class="panel"><summary>Подключение сайта</summary><div class="grid2"><label class="f">Адрес API сайта<input id="siteApiUrl" value="'+esc(siteCfg().url)+'" placeholder="https://rubizh.shop/api"></label><label class="f">Ключ PIM<input id="siteApiKey" type="password" value="'+esc(siteCfg().key)+'"></label></div><button class="btn" data-final="saveSite">Сохранить</button></details>';
 }
 function finalQueue(){
  const items=simpleDecisions().map(t=>({...t,kind:t.kind==='grouping'?'model':t.kind})),covered=new Set(items.flatMap(t=>(t.ids||[]).map(id=>t.kind+':'+id)));
@@ -344,6 +373,7 @@ document.addEventListener('click',async e=>{
    if(a==='rejectedCode'){FINAL_UI.rejectedCode=b.dataset.code;FINAL_UI.page=0;}
    if(a==='saveSite'){S.cfg.siteApi={...siteCfg(),url:$('#siteApiUrl').value.trim(),key:$('#siteApiKey').value.trim(),auto:false};S.cfgDirty=true;await persist();toast('Подключение сохранено');}
    if(a==='publish')await sitePublish('delta');
+   if(a==='publishStale'&&confirm(finalFreshnessBlock()+'\n\nОпубликовать?'))await sitePublish('delta',{allowStale:true});
   }catch(error){toast('Сайт: '+(error.message||error));}finally{FINAL_UI.busy=false;render();}
   return;
  }

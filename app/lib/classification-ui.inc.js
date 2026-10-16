@@ -173,10 +173,12 @@ function classificationOptions(p){
  const sold=(c,size)=>c.scope==='MODEL'?(colors.length?colors.every(color=>real(color,size)):real(undefined,size)):real(c.color_id,size);
  return (p.size_catalogs||[]).flatMap(c=>c.allowed_sizes.filter(size=>!sold(c,size)).map(size=>({option_id:c.catalog_id+':'+size,catalog_id:c.catalog_id,scope:c.scope,color_id:c.color_id,size,size_system:c.size_system,variant_sku:null,supplier_sku:null,stock:null,stock_quantity:null,stock_status:'UNKNOWN',availability_status:'UNKNOWN',availability_source:null,availability_confirmation:'UNKNOWN',availability:'SIZE_CONFIRMATION_REQUIRED',...classificationPermissions('SIZE_CONFIRMATION_REQUIRED'),selectable_for_request:true})));
 }
-const STOCK_WARNING_DEFAULT_HOURS=36;
+// Stage 5 (owner 2026-10-16): freshHours 36 — older supplier stock is not offered for payment; a warning after 24 h.
+const STOCK_WARNING_DEFAULT_HOURS=36,FRESH_WARN_HOURS=24;
 function classificationFreshnessHours(sid){
  const raw=S.cfg.suppliers.find(s=>s.id===sid)?.stock_freshness_hours;
- return typeof raw==='number'&&Number.isFinite(raw)&&raw>0?raw:STOCK_WARNING_DEFAULT_HOURS;
+ if(typeof raw==='number'&&Number.isFinite(raw)&&raw>0)return raw;
+ const global=Number(S.cfg.freshHours);return Number.isFinite(global)&&global>0?global:STOCK_WARNING_DEFAULT_HOURS;
 }
 function classificationObservedAt(o){
  // Legacy at is an observation only until separate import provenance exists.
@@ -201,8 +203,19 @@ function classificationInventoryContext(o,v){
  return context;
 }
 function classificationInventory(o,v){const supplier=S.cfg.suppliers.find(s=>s.id===o?.sid);return RubizhInventory.observe(RubizhInventory.policy(supplier),classificationInventoryContext(o,v));}
+// The offer that decides a SKU's availability (the priced offer, else the first enabled supplier's).
+function classificationSelectedOffer(p,v,c=calc(p,v)){
+ const fallback=Object.entries(v.offers||{}).filter(([sid])=>S.cfg.suppliers.some(s=>s.id===sid&&!s.disabled)).map(([sid,o])=>({sid,...o})),selected=c.o||c.ref||fallback[0];
+ return selected?.sid&&v.offers?.[selected.sid]?{sid:selected.sid,...v.offers[selected.sid]}:selected;
+}
+function classificationManualStock(v){return !!(v?.manualFields?.stock||v?.manual_locks?.stock||v?.fieldMeta?.stock?.source==='manual'||v?.manualFields?.availability||v?.manual_locks?.availability);}
+// PIMC-P2: a supplier IN_STOCK observation older than the freshness limit is not payable — exported as UNKNOWN (the
+// manager confirms), unless the owner set the stock by hand. The availability change changes the model hash.
+function classificationStaleDowngrade(p,v,o=classificationSelectedOffer(p,v)){
+ return !!o&&classificationStockMetadata(o).stale_source&&!classificationManualStock(v)&&classificationInventory(o,v).availability_status==='IN_STOCK';
+}
 function classificationAvailability(p,v){
- const c=calc(p,v),fallback=Object.entries(v.offers||{}).filter(([sid])=>S.cfg.suppliers.some(s=>s.id===sid&&!s.disabled)).map(([sid,o])=>({sid,...o})),selected=c.o||c.ref||fallback[0],o=selected?.sid&&v.offers?.[selected.sid]?{sid:selected.sid,...v.offers[selected.sid]}:selected,metadata=classificationStockMetadata(o),inv=classificationInventory(o,v);
+ const c=calc(p,v),o=classificationSelectedOffer(p,v,c),metadata=classificationStockMetadata(o),inv=classificationInventory(o,v);
  const priceReady=c.price>0&&!modelVariant(p,v).margin_blocked;
  const result=(availability,confirmed=false)=>{
   const quantity=confirmed?inv.stock_quantity:null,flags=classificationPermissions(availability);
@@ -212,6 +225,7 @@ function classificationAvailability(p,v){
  if(!o||o.missing||o.discontinued||v.source_binding_status!=='CONFIRMED')return result('UNKNOWN');
  if(v.size_status==='SIZE_CONFIRMATION_REQUIRED'||v.size_confidence_tier!=='SAFE_AUTO')return result('SIZE_CONFIRMATION_REQUIRED');
  if(metadata.expires_at&&Date.now()>=metadata.expires_at)return result('UNKNOWN');
+ if(classificationStaleDowngrade(p,v,o))return result('UNKNOWN');
  if(!['EXACT_SIZE','ONE_SIZE','NO_SIZE_REQUIRED'].includes(v.size_status))return result('UNKNOWN');
  return result(inv.availability_status,['IN_STOCK','OUT_OF_STOCK','PREORDER','ORDER_ON_REQUEST'].includes(inv.availability_status));
 }
