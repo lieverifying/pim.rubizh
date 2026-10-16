@@ -8224,12 +8224,12 @@ function sbLoginDialog(note){
 
 // ---- загрузка с сервера (до чтения базы в память)
 async function rememberSiteCredentials105(cfg){
- if(cfg?.siteApi?.key)await Store._set0('auth/site_credentials',{url:cfg.siteApi.url||'',key:cfg.siteApi.key});
+ if(cfg?.siteApi?.key)await Store._set0('auth/site_credentials',{url:cfg.siteApi.url||'',key:cfg.siteApi.key,...(cfg.siteApi.keyNext?{keyNext:cfg.siteApi.keyNext}:{})});
 }
 async function syncedConfig105(cfg){await rememberSiteCredentials105(cfg);return sanitizePortableConfig(cfg);}
 async function receiveConfig105(cfg){
  const clean=sanitizePortableConfig(cfg),auth=await Store._get0('auth/site_credentials');
- if(auth?.key&&auth.url===(clean.siteApi?.url||''))clean.siteApi={...clean.siteApi,key:auth.key};
+ if(auth?.key&&auth.url===(clean.siteApi?.url||''))clean.siteApi={...clean.siteApi,key:auth.key,...(auth.keyNext?{keyNext:auth.keyNext}:{})};
  return clean;
 }
 async function applyRemote105(puts,dels,revision){
@@ -9187,7 +9187,7 @@ Store.catalogCommit=async function(puts,dels,revision){
 };
 function sanitizePortableConfig(cfg){
  const clean=structuredClone(cfg||{});
- const visit=x=>{if(!x||typeof x!=='object')return;for(const k of Object.keys(x)){if(/^(?:pim_key|key|password|supabasePassword|access_token|refresh_token|service_role|secret|apiKey|api_key|authorization)$/i.test(k))delete x[k];else visit(x[k]);}};
+ const visit=x=>{if(!x||typeof x!=='object')return;for(const k of Object.keys(x)){if(/^(?:pim_key|key|keyNext|key_next|password|supabasePassword|access_token|refresh_token|service_role|secret|apiKey|api_key|authorization)$/i.test(k))delete x[k];else visit(x[k]);}};
  visit(clean);if(clean.siteApi)clean.siteApi.auto=false;return clean;
 }
 const _backup104=backupData;backupData=function(label='manual'){const d=_backup104(label);d.cfg=sanitizePortableConfig(d.cfg);d.pimVersion=PIM_VERSION;return d;};
@@ -10776,13 +10776,33 @@ buildFeed=function(){
 };
 // Publisher: SITE must advertise the exact contract; each batch is acknowledged per model; only explicit hide_ids hide.
 const FINAL_SYNC_CHUNK=100,FINAL_NET={fetch:(...args)=>classificationNetwork(...args)};
+async function finalSiteRequest(path,opt,key){
+ const c=siteCfg(),url=c.url.replace(/\/+$/,'')+path;let r,j=null;
+ try{r=await FINAL_NET.fetch(url,{...opt,headers:{'Content-Type':'application/json',Authorization:'Bearer '+key,...(opt.headers||{})}});}catch{throw Error('нет связи с сайтом ('+c.url+')');}
+ try{j=await r.json();}catch{}
+ return {r,j};
+}
+// pim_key rotation (stage 5): the site may already accept only the next key — one retry with it, then the owner promotes it.
 async function finalSiteFetch(path,opt={}){
  if(classificationReviewMode())throw Error('REVIEW_ONLY: network disabled; production writes forbidden');
- const c=siteCfg(),url=c.url.replace(/\/+$/,'')+path;let r,j=null;
- try{r=await FINAL_NET.fetch(url,{...opt,headers:{'Content-Type':'application/json',Authorization:'Bearer '+c.key,...(opt.headers||{})}});}catch{throw Error('нет связи с сайтом ('+c.url+')');}
- try{j=await r.json();}catch{}
+ const c=siteCfg();let {r,j}=await finalSiteRequest(path,opt,c.key);
+ if(r.status===401&&c.keyNext&&c.keyNext!==c.key){
+  ({r,j}=await finalSiteRequest(path,opt,c.keyNext));
+  if(r.ok&&j&&j.ok!==false){S.cfg.siteSync={...(S.cfg.siteSync||{}),keyNotice:'Сайт прийняв лише новий ключ. Зробіть новий ключ основним.'};S.cfgDirty=true;}
+ }
  if(!r.ok||!j||j.ok===false)throw Error((j&&j.error)||('сайт ответил '+r.status));
  return j;
+}
+async function finalCheckNextKey(){
+ const c=siteCfg();if(!c.keyNext)throw Error('Вкажіть новий ключ.');
+ const {r,j}=await finalSiteRequest('/pim/status',{},c.keyNext);
+ if(!r.ok||!j||j.key_slot!=='next')throw Error('Сайт не прийняв новий ключ як наступний (pim_key_next). Перевірте api/config.php.');
+ return j;
+}
+async function finalPromoteNextKey(){
+ const c=siteCfg();if(!c.keyNext)throw Error('Новий ключ не задано.');
+ const api={...c,key:c.keyNext};delete api.keyNext;S.cfg.siteApi=api;
+ if(S.cfg.siteSync)delete S.cfg.siteSync.keyNotice;S.cfgDirty=true;await rememberSiteCredentials105(S.cfg);await persist();
 }
 // Stage 5 (owner 2026-10-16): supplier data freshness before publication. Older than 24 h → warning; older than the
 // freshness limit (freshHours 36) → publication stops until the owner confirms, showing how many products lose availability.
@@ -10883,7 +10903,7 @@ function vFinalReady(){
  const q=norm(FINAL_UI.q),tokens=searchTokens(FINAL_UI.q),list=[...S.products.values()].filter(p=>finalDecision(p).state==='READY'&&(!FINAL_UI.category||p.canonical_category_id===FINAL_UI.category)&&(!q||scoreProduct(p,tokens,q))&&(!FINAL_UI.availability||finalSummary(p).availability[FINAL_UI.availability]>0)).sort((a,b)=>pimCompare(finalTitle(a),finalTitle(b)));
  const cats=uniq([...S.products.values()].filter(p=>finalDecision(p).state==='READY').map(p=>p.canonical_category_id)).sort((a,b)=>pimCompare(canonicalPath(a),canonicalPath(b))),s=S.cfg.siteSync||{};
  const rows=list.slice(FINAL_UI.page*50,FINAL_UI.page*50+50).map(p=>{const x=finalSummary(p);return '<tr class="click" data-open="'+esc(p.id)+'"><td class="final-cover">'+(x.cover?'<img loading="lazy" alt="" src="'+esc(x.cover)+'">':'')+'</td><td><b>'+esc(finalTitle(p))+'</b><div class="small muted">'+esc(p.brand||'')+'</div></td><td class="small">'+esc(canonicalPath(p.canonical_category_id))+'</td><td>'+x.colors+'</td><td>'+x.skus+'</td><td>'+(x.min==null?'—':x.min===x.max?money(x.min):money(x.min)+' – '+money(x.max))+'</td><td class="small">'+esc(finalAvailabilityText(x.availability))+'</td><td class="small">'+esc(finalSyncState(p))+'</td></tr>';}).join('');
- return '<h1>На сайт</h1><p class="lead">Модели, готовые к публикации. Наличие влияет на возможность оплаты, а не убирает модель.</p>'+finalPricePolicyNotice()+finalFreshnessNotice()+'<section class="panel row final-actions"><button class="btn primary" data-final="publish" '+(siteReady()&&pricingProtected()?'':'disabled')+'>Отправить на сайт</button><span class="muted">Готово: '+finalCounts().READY+'</span>'+(s.at?'<span class="small muted">Последняя отправка: '+fmtDate(s.at)+(s.batch_id?' · '+esc(s.batch_id):'')+'</span>':'')+(s.lastError&&(s.lastErrorAt||0)>(s.at||0)?'<span class="small finance-bad">'+esc(s.lastError)+'</span>':'')+'</section><section class="panel row final-filters"><input id="finalQ" type="search" placeholder="Поиск по названию, SKU, бренду" value="'+esc(FINAL_UI.q)+'"><select id="finalCategory"><option value="">Все категории</option>'+cats.map(id=>'<option value="'+esc(id)+'" '+(FINAL_UI.category===id?'selected':'')+'>'+esc(canonicalPath(id))+'</option>').join('')+'</select><select id="finalAvailability"><option value="">Любое наличие</option>'+[['IN_STOCK','В наличии'],['PREORDER','Предзаказ'],['ORDER_ON_REQUEST','Под заказ'],['SIZE_CONFIRMATION_REQUIRED','Размер по запросу'],['UNKNOWN','Неизвестно'],['OUT_OF_STOCK','Нет в наличии']].map(([k,l])=>'<option value="'+k+'" '+(FINAL_UI.availability===k?'selected':'')+'>'+l+'</option>').join('')+'</select></section><div class="tablewrap"><table class="final-table"><thead><tr><th></th><th>Модель</th><th>Категория</th><th>Цвета</th><th>SKU</th><th>Цена</th><th>Наличие</th><th>Сайт</th></tr></thead><tbody>'+(rows||'<tr><td colspan="8">Нет моделей по фильтру.</td></tr>')+'</tbody></table></div>'+finalPager(list.length)+'<details class="panel"><summary>Подключение сайта</summary><div class="grid2"><label class="f">Адрес API сайта<input id="siteApiUrl" value="'+esc(siteCfg().url)+'" placeholder="https://rubizh.shop/api"></label><label class="f">Ключ PIM<input id="siteApiKey" type="password" value="'+esc(siteCfg().key)+'"></label></div><button class="btn" data-final="saveSite">Сохранить</button></details>';
+ return '<h1>На сайт</h1><p class="lead">Модели, готовые к публикации. Наличие влияет на возможность оплаты, а не убирает модель.</p>'+finalPricePolicyNotice()+finalFreshnessNotice()+'<section class="panel row final-actions"><button class="btn primary" data-final="publish" '+(siteReady()&&pricingProtected()?'':'disabled')+'>Отправить на сайт</button><span class="muted">Готово: '+finalCounts().READY+'</span>'+(s.at?'<span class="small muted">Последняя отправка: '+fmtDate(s.at)+(s.batch_id?' · '+esc(s.batch_id):'')+'</span>':'')+(s.lastError&&(s.lastErrorAt||0)>(s.at||0)?'<span class="small finance-bad">'+esc(s.lastError)+'</span>':'')+'</section><section class="panel row final-filters"><input id="finalQ" type="search" placeholder="Поиск по названию, SKU, бренду" value="'+esc(FINAL_UI.q)+'"><select id="finalCategory"><option value="">Все категории</option>'+cats.map(id=>'<option value="'+esc(id)+'" '+(FINAL_UI.category===id?'selected':'')+'>'+esc(canonicalPath(id))+'</option>').join('')+'</select><select id="finalAvailability"><option value="">Любое наличие</option>'+[['IN_STOCK','В наличии'],['PREORDER','Предзаказ'],['ORDER_ON_REQUEST','Под заказ'],['SIZE_CONFIRMATION_REQUIRED','Размер по запросу'],['UNKNOWN','Неизвестно'],['OUT_OF_STOCK','Нет в наличии']].map(([k,l])=>'<option value="'+k+'" '+(FINAL_UI.availability===k?'selected':'')+'>'+l+'</option>').join('')+'</select></section><div class="tablewrap"><table class="final-table"><thead><tr><th></th><th>Модель</th><th>Категория</th><th>Цвета</th><th>SKU</th><th>Цена</th><th>Наличие</th><th>Сайт</th></tr></thead><tbody>'+(rows||'<tr><td colspan="8">Нет моделей по фильтру.</td></tr>')+'</tbody></table></div>'+finalPager(list.length)+'<details class="panel"><summary>Подключение сайта</summary><div class="grid2"><label class="f">Адрес API сайта<input id="siteApiUrl" value="'+esc(siteCfg().url)+'" placeholder="https://rubizh.shop/api"></label><label class="f">Ключ PIM<input id="siteApiKey" type="password" value="'+esc(siteCfg().key)+'"></label><label class="f">Новий ключ (ротація)<input id="siteApiKeyNext" type="password" autocomplete="off" value="'+esc(siteCfg().keyNext||'')+'"></label></div><button class="btn" data-final="saveSite">Сохранить</button> <button class="btn" data-final="checkNextKey">Перевірити</button> <button class="btn" data-final="promoteKey" '+(siteCfg().keyNext?'':'disabled')+'>Зробити основним</button>'+(s.keyNotice?'<p class="small finance-bad" role="status">'+esc(s.keyNotice)+'</p>':'')+'</details>';
 }
 function finalQueue(){
  const items=simpleDecisions().map(t=>({...t,kind:t.kind==='grouping'?'model':t.kind})),covered=new Set(items.flatMap(t=>(t.ids||[]).map(id=>t.kind+':'+id)));
@@ -10942,7 +10962,9 @@ document.addEventListener('click',async e=>{
   try{const a=b.dataset.final;
    if(a==='page')FINAL_UI.page=Math.max(0,FINAL_UI.page+Number(b.dataset.d));
    if(a==='rejectedCode'){FINAL_UI.rejectedCode=b.dataset.code;FINAL_UI.page=0;}
-   if(a==='saveSite'){S.cfg.siteApi={...siteCfg(),url:$('#siteApiUrl').value.trim(),key:$('#siteApiKey').value.trim(),auto:false};S.cfgDirty=true;await persist();toast('Подключение сохранено');}
+   if(a==='saveSite'){const next=($('#siteApiKeyNext')?.value||'').trim(),api={...siteCfg(),url:$('#siteApiUrl').value.trim(),key:$('#siteApiKey').value.trim(),auto:false};if(next)api.keyNext=next;else delete api.keyNext;S.cfg.siteApi=api;S.cfgDirty=true;await rememberSiteCredentials105(S.cfg);await persist();toast('Подключение сохранено');}
+   if(a==='checkNextKey'){await finalCheckNextKey();toast('Сайт приймає новий ключ. Тепер натисніть «Зробити основним».');}
+   if(a==='promoteKey'&&confirm('Зробити новий ключ основним? Після цього на сайті перенесіть його в pim_key і очистіть pim_key_next.')){await finalPromoteNextKey();toast('Новий ключ став основним.');}
    if(a==='publish')await sitePublish('delta');
    if(a==='publishStale'&&confirm(finalFreshnessBlock()+'\n\nОпубликовать?'))await sitePublish('delta',{allowStale:true});
   }catch(error){toast('Сайт: '+(error.message||error));}finally{FINAL_UI.busy=false;render();}

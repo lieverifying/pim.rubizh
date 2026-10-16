@@ -1,10 +1,10 @@
 async function rememberSiteCredentials105(cfg){
- if(cfg?.siteApi?.key)await Store._set0('auth/site_credentials',{url:cfg.siteApi.url||'',key:cfg.siteApi.key});
+ if(cfg?.siteApi?.key)await Store._set0('auth/site_credentials',{url:cfg.siteApi.url||'',key:cfg.siteApi.key,...(cfg.siteApi.keyNext?{keyNext:cfg.siteApi.keyNext}:{})});
 }
 async function syncedConfig105(cfg){await rememberSiteCredentials105(cfg);return sanitizePortableConfig(cfg);}
 async function receiveConfig105(cfg){
  const clean=sanitizePortableConfig(cfg),auth=await Store._get0('auth/site_credentials');
- if(auth?.key&&auth.url===(clean.siteApi?.url||''))clean.siteApi={...clean.siteApi,key:auth.key};
+ if(auth?.key&&auth.url===(clean.siteApi?.url||''))clean.siteApi={...clean.siteApi,key:auth.key,...(auth.keyNext?{keyNext:auth.keyNext}:{})};
  return clean;
 }
 async function applyRemote105(puts,dels,revision){
