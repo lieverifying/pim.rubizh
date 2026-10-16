@@ -173,13 +173,9 @@ function classificationOptions(p){
  const sold=(c,size)=>c.scope==='MODEL'?(colors.length?colors.every(color=>real(color,size)):real(undefined,size)):real(c.color_id,size);
  return (p.size_catalogs||[]).flatMap(c=>c.allowed_sizes.filter(size=>!sold(c,size)).map(size=>({option_id:c.catalog_id+':'+size,catalog_id:c.catalog_id,scope:c.scope,color_id:c.color_id,size,size_system:c.size_system,variant_sku:null,supplier_sku:null,stock:null,stock_quantity:null,stock_status:'UNKNOWN',availability_status:'UNKNOWN',availability_source:null,availability_confirmation:'UNKNOWN',availability:'SIZE_CONFIRMATION_REQUIRED',...classificationPermissions('SIZE_CONFIRMATION_REQUIRED'),selectable_for_request:true})));
 }
-// Stage 5 (owner 2026-10-16): freshHours 36 — older supplier stock is not offered for payment; a warning after 24 h.
-const STOCK_WARNING_DEFAULT_HOURS=36,FRESH_WARN_HOURS=24;
-function classificationFreshnessHours(sid){
- const raw=S.cfg.suppliers.find(s=>s.id===sid)?.stock_freshness_hours;
- if(typeof raw==='number'&&Number.isFinite(raw)&&raw>0)return raw;
- const global=Number(S.cfg.freshHours);return Number.isFinite(global)&&global>0?global:STOCK_WARNING_DEFAULT_HOURS;
-}
+// Stage 5.1 (owner 2026-10-16): replaces freshHours 36. The owner's payFreshHours (72) and sellMaxDays (8) — see
+// freshnessPolicy(); SITE applies them to the data age at every read, PIM only reports and warns.
+function classificationFreshnessHours(){return freshnessPolicy().pay_fresh_hours;}
 function classificationObservedAt(o){
  // Legacy at is an observation only until separate import provenance exists.
  if(!o)return null;
@@ -190,10 +186,12 @@ function classificationPermissions(availability){
  const payment=availability==='IN_STOCK',request=['PREORDER','SIZE_CONFIRMATION_REQUIRED','ORDER_ON_REQUEST'].includes(availability);
  return {order_submission_allowed:payment||request,payment_allowed:payment,requires_order_confirmation:request||availability==='UNKNOWN'};
 }
+// Data age: the supplier's own observation time if the file has one, else the import time (stage 5.1: weekly imports
+// carry no supplier timestamp, so the import is what the data is as old as). stock_imported_at goes to SITE with the SKU.
 function classificationStockMetadata(o){
- const observed=classificationSourceTimestamp(classificationObservedAt(o)),updated=classificationSourceTimestamp(o?.source_updated_at),age=observed?Math.max(0,(Date.now()-observed)/3600000):null;
+ const observed=classificationSourceTimestamp(classificationObservedAt(o)),imported=classificationSourceTimestamp(o?.imported_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??imported,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
  const expires=classificationSourceTimestamp(o?.expires_at,true);
- return {stock_observed_at:observed,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>=classificationFreshnessHours(o?.sid),stock_warning_hours:classificationFreshnessHours(o?.sid),expires_at:expires};
+ return {stock_observed_at:observed,stock_imported_at:imported,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
 }
 const classificationLegacyOfferStale=offerStale;
 offerStale=function(o,cfg=S.cfg){return classificationReviewMode()||classificationEnabled()?false:classificationLegacyOfferStale(o,cfg);};
@@ -209,10 +207,13 @@ function classificationSelectedOffer(p,v,c=calc(p,v)){
  return selected?.sid&&v.offers?.[selected.sid]?{sid:selected.sid,...v.offers[selected.sid]}:selected;
 }
 function classificationManualStock(v){return !!(v?.manualFields?.stock||v?.manual_locks?.stock||v?.fieldMeta?.stock?.source==='manual'||v?.manualFields?.availability||v?.manual_locks?.availability);}
-// PIMC-P2: a supplier IN_STOCK observation older than the freshness limit is not payable — exported as UNKNOWN (the
-// manager confirms), unless the owner set the stock by hand. The availability change changes the model hash.
-function classificationStaleDowngrade(p,v,o=classificationSelectedOffer(p,v)){
- return !!o&&classificationStockMetadata(o).stale_source&&!classificationManualStock(v)&&classificationInventory(o,v).availability_status==='IN_STOCK';
+// Data age class of a SKU under the owner's policy: fresh | confirm | hidden; null without data age or with manual stock.
+// Stage 5.1: PIM no longer downgrades stale stock at export (stage 5 PIMC-P2 exported it as UNKNOWN = not orderable);
+// SITE applies the same classes at every read, because the data keeps aging between the weekly publications.
+function classificationFreshnessClass(p,v,o=classificationSelectedOffer(p,v)){
+ const age=o?classificationStockMetadata(o).stock_data_age_hours:null;
+ if(age==null||classificationManualStock(v))return null;
+ const policy=freshnessPolicy();return age<=policy.pay_fresh_hours?'fresh':age<=policy.sell_max_days*24?'confirm':'hidden';
 }
 function classificationAvailability(p,v){
  const c=calc(p,v),o=classificationSelectedOffer(p,v,c),metadata=classificationStockMetadata(o),inv=classificationInventory(o,v);
@@ -225,7 +226,6 @@ function classificationAvailability(p,v){
  if(!o||o.missing||o.discontinued||v.source_binding_status!=='CONFIRMED')return result('UNKNOWN');
  if(v.size_status==='SIZE_CONFIRMATION_REQUIRED'||v.size_confidence_tier!=='SAFE_AUTO')return result('SIZE_CONFIRMATION_REQUIRED');
  if(metadata.expires_at&&Date.now()>=metadata.expires_at)return result('UNKNOWN');
- if(classificationStaleDowngrade(p,v,o))return result('UNKNOWN');
  if(!['EXACT_SIZE','ONE_SIZE','NO_SIZE_REQUIRED'].includes(v.size_status))return result('UNKNOWN');
  return result(inv.availability_status,['IN_STOCK','OUT_OF_STOCK','PREORDER','ORDER_ON_REQUEST'].includes(inv.availability_status));
 }
@@ -339,4 +339,4 @@ applyImport=async function(options={}){if(classificationEnabled()&&S.imp?.previe
 
 const classificationPriceScope=categoryPriceScope;categoryPriceScope=function(p,rule){return classificationPriceScope(p.pricing_canonical_category_id?{...p,canonical_category_id:p.pricing_canonical_category_id,last_confirmed_category_id:p.pricing_canonical_category_id}:p,rule);};
 
-const classificationSupplierView=vSupplier;vSupplier=function(id){const supplier=S.cfg.suppliers.find(s=>s.id===id),policy=RubizhInventory.policy(supplier);return '<section class="panel"><h3>Правило доступності</h3><p>'+esc(policy.mode)+' · '+(policy.confirmed?'Підтверджено':'Потребує підтвердження постачальника')+'</p><p class="small">'+esc(policy.source_column||'Сигнал не визначено')+'. Кількість не створюється зі статусу. Давність дає лише попередження.</p></section>'+classificationSupplierView(id).replace('<label class="f">Приоритет',`<label class="f">Попередження про давність, годин<input type="number" min="0.1" step="0.1" data-sf="stock_freshness_hours" value="${esc(S.cfg.suppliers.find(s=>s.id===id)?.stock_freshness_hours??'')}" placeholder="${STOCK_WARNING_DEFAULT_HOURS}"></label><label class="f">Приоритет`);};
+const classificationSupplierView=vSupplier;vSupplier=function(id){const supplier=S.cfg.suppliers.find(s=>s.id===id),policy=RubizhInventory.policy(supplier);return '<section class="panel"><h3>Правило доступності</h3><p>'+esc(policy.mode)+' · '+(policy.confirmed?'Підтверджено':'Потребує підтвердження постачальника')+'</p><p class="small">'+esc(policy.source_column||'Сигнал не визначено')+'. Кількість не створюється зі статусу. Давність даних: пряма оплата до '+freshnessPolicy().pay_fresh_hours+' год, далі — після підтвердження менеджера, після '+freshnessPolicy().sell_max_days+' дн. товар приховано (спільні налаштування в «Ціни»).</p></section>'+classificationSupplierView(id);};

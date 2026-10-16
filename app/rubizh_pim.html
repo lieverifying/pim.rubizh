@@ -507,7 +507,7 @@ const Store = {
 
 /* ===================== состояние ===================== */
 const DEFAULT_CFG = {
-  suppliers: [], rules: [], hideUnavailable:false, contentEngineAutoDraft:true, defaultMarkup: 40, minMargin: 30, bigPriceFrom: 10000, bigPriceMargin: 25, kitMargin: 20, discountMarginFloor: 15, pricing_policy_version: 0, donPct: 3, donPctBig: 3, donFrom: 0, donMode: "check", donCapPct: 50, donProgressive: false, donSkipWholesale: false, round: 10, jumpPct: 15, freshHours: 36,
+  suppliers: [], rules: [], hideUnavailable:false, contentEngineAutoDraft:true, defaultMarkup: 40, minMargin: 30, bigPriceFrom: 10000, bigPriceMargin: 25, kitMargin: 20, discountMarginFloor: 15, pricing_policy_version: 0, donPct: 3, donPctBig: 3, donFrom: 0, donMode: "check", donCapPct: 50, donProgressive: false, donSkipWholesale: false, round: 10, jumpPct: 15, freshHours: 36, payFreshHours: 72, sellMaxDays: 8,
   skuPrefix: "RUB", nextSku: 1, stockYes: 5, sizeMap: "", colorMap: "", brandMap: "", catMap: "",
   taxPct: 5, acquiringPct: 2, deliveryCost: 0, extraCost: 0, supplierAliases: {}, undoBySupplier: {},
   lastExternalBackup: 0, storagePersistent: false, trashDays: 30, dataSchemaVersion: 710, kiborgBaselineMigration: 0,
@@ -2843,9 +2843,25 @@ async function ensurePricingPolicy(){
   S.pricingPolicyError='';toast('Применена маржа 30% / 25% / 20%. Скидки защищены остатком 15% после доната.');return true;
  }catch(error){S.pricingPolicyError=error.message||String(error);if(changed){loadStateData(backup);markAllDirty();await persist();}throw error;}
 }
+// Stage 5.1 (owner 2026-10-16), replaces the single freshHours 36: supplier data age (supplier observation time, else the
+// import time) ≤ payFreshHours → direct payment; up to sellMaxDays → sold only after the manager confirms; older → hidden
+// on SITE until fresh data. Owner settings; sent to SITE with every sync batch (freshness_policy v1), SITE applies them.
+const FRESHNESS_DEFAULT=Object.freeze({pay_fresh_hours:72,sell_max_days:8});
+function freshnessPolicyErrors(cfg){
+ const pay=cfg?.payFreshHours,sell=cfg?.sellMaxDays,errors=[];
+ if(!Number.isInteger(pay)||pay<1||pay>336)errors.push('Прямая оплата: целое число часов от 1 до 336.');
+ if(!Number.isInteger(sell)||sell<1||sell>60)errors.push('Скрытие товара: целое число дней от 1 до 60.');
+ if(!errors.length&&sell*24<=pay)errors.push('Срок скрытия ('+sell+' дн.) должен быть позже срока прямой оплаты ('+pay+' ч).');
+ return errors;
+}
+function freshnessPolicy(cfg=S.cfg){
+ const own={payFreshHours:cfg?.payFreshHours??FRESHNESS_DEFAULT.pay_fresh_hours,sellMaxDays:cfg?.sellMaxDays??FRESHNESS_DEFAULT.sell_max_days};
+ return freshnessPolicyErrors(own).length?{version:1,...FRESHNESS_DEFAULT}:{version:1,pay_fresh_hours:own.payFreshHours,sell_max_days:own.sellMaxDays};
+}
 async function savePriceSettings(){
  readPrices();if(!S.priceDraft)return false;
  const draft=structuredClone(S.priceDraft),before=structuredClone(S.cfg);
+ const freshness=freshnessPolicyErrors(draft);if(freshness.length)throw Error(freshness.join(' '));
  for(const key of ['taxPct','acquiringPct','minMargin','bigPriceMargin','kitMargin','discountMarginFloor','donPct'])if(!Number.isFinite(draft[key])||draft[key]<0||draft[key]>=100)throw Error('Некорректный процент: '+key);
  const fees=draft.taxPct+draft.acquiringPct;
  if(fees+Math.max(draft.minMargin,draft.bigPriceMargin,draft.kitMargin)>=100||fees+draft.donPct+draft.discountMarginFloor>=100)throw Error('Маржа, комиссии и донат не оставляют места для закупки. Исправьте проценты.');
@@ -5662,7 +5678,7 @@ function vSupplier(id){
 }
 
 /* ===================== экран: цены ===================== */
-const PRICE_KEYS = ["rules","defaultMarkup","minMargin","bigPriceFrom","bigPriceMargin","kitMargin","discountMarginFloor","donPct","donPctBig","donFrom","donMode","donCapPct","donProgressive","donSkipWholesale","taxPct","acquiringPct","deliveryCost","extraCost","round","roundMode","tiers","jumpPct","freshHours","skuPrefix"];
+const PRICE_KEYS = ["rules","defaultMarkup","minMargin","bigPriceFrom","bigPriceMargin","kitMargin","discountMarginFloor","donPct","donPctBig","donFrom","donMode","donCapPct","donProgressive","donSkipWholesale","taxPct","acquiringPct","deliveryCost","extraCost","round","roundMode","tiers","jumpPct","freshHours","payFreshHours","sellMaxDays","skuPrefix"];
 function priceSlice(c){ const o = {}; for (const k of PRICE_KEYS) o[k] = c[k]; return structuredClone(o); }
 function vPrices(){
   const D = S.priceDraft || (S.priceDraft = priceSlice(S.cfg));
@@ -5696,7 +5712,9 @@ function vPrices(){
     <label class="f">Минимум после доната при скидке, %<input type="number" data-pd="discountMarginFloor" min="15" max="60" step="0.5" value="${Math.max(15,+D.discountMarginFloor||15)}"><span class="small">Скидка уменьшается, если остаток ниже этого процента. Включает указанные расходы.</span></label>
     <label class="f">Оптовые скидки, % через запятую<input data-pd="tiers" value="${esc(D.tiers || "")}" placeholder="12, 18"><span class="small">Запрошенные уровни. Фактическая скидка ограничена допустимой ценой товара.</span></label>
     <label class="f">Предупреждать о скачке закупки от, %<input type="number" data-pd="jumpPct" value="${D.jumpPct}"></label>
-    <label class="f">«В наличии», если файл свежее, ч<input type="number" data-pd="freshHours" value="${D.freshHours}"></label>
+    <label class="f">«В наличии», если файл свежее, ч (старый режим без классификации)<input type="number" data-pd="freshHours" value="${D.freshHours}"></label>
+    <label class="f">Прямая оплата на сайте, если данные поставщика свежее, ч<input type="number" data-pd="payFreshHours" min="1" max="336" step="1" value="${D.payFreshHours??72}"></label>
+    <label class="f">Скрыть товар с сайта, если данные старше, дней<input type="number" data-pd="sellMaxDays" min="1" max="60" step="1" value="${D.sellMaxDays??8}"></label>
     <label class="f">Префикс нашего SKU<input data-pd="skuPrefix" value="${esc(D.skuPrefix)}"></label>
   </div>
   <p class="small muted" style="margin-bottom:0">Товары с чистой маржой ниже минимальной не попадают в выгрузку на сайт без ручного исключения, пока вы не проверите цену.</p></div>
@@ -9402,7 +9420,7 @@ ceExtract=function(p){
 function pimOperationsStatus(){
  const expired=new Set(),jumps=new Set();for(const p of S.products.values())for(const v of p.variants)for(const o of Object.values(v.offers||{})){if(offerStale(o))expired.add(p.id);if(o.priceAlert)jumps.add(p.id);}
  const unconfirmed=S.cfg.suppliers.filter(s=>s.terms?.preorderConfirmed!==true);
- return `<section class="panel"><h2>Что требует внимания</h2><p>Срок проверки наличия: ${esc(S.cfg.freshHours)} ч. У ${expired.size} товаров есть устаревшие предложения; обновите прайсы. Ожидают решения по скачку цены: ${jumps.size}.</p><p>Без подтверждённых правил предзаказа: ${unconfirmed.length} поставщиков. Условия изготовления задаются отдельно для каждого поставщика.</p><div class="row"><button class="btn" data-view="import">Обновить прайс</button><button class="btn" data-view="suppliers">Условия поставщиков</button><button class="btn" data-view="kits">Комплекты</button></div></section>`;
+ return `<section class="panel"><h2>Что требует внимания</h2><p>Давность данных поставщиков: прямая оплата до ${esc(freshnessPolicy().pay_fresh_hours)} ч, после ${esc(freshnessPolicy().sell_max_days)} дн. товар скрыт на сайте. У ${expired.size} товаров есть устаревшие предложения; обновите прайсы. Ожидают решения по скачку цены: ${jumps.size}.</p><p>Без подтверждённых правил предзаказа: ${unconfirmed.length} поставщиков. Условия изготовления задаются отдельно для каждого поставщика.</p><div class="row"><button class="btn" data-view="import">Обновить прайс</button><button class="btn" data-view="suppliers">Условия поставщиков</button><button class="btn" data-view="kits">Комплекты</button></div></section>`;
 }
 const _today105=vToday;vToday=function(){return _today105()+pimOperationsStatus();};
 
@@ -10263,13 +10281,9 @@ function classificationOptions(p){
  const sold=(c,size)=>c.scope==='MODEL'?(colors.length?colors.every(color=>real(color,size)):real(undefined,size)):real(c.color_id,size);
  return (p.size_catalogs||[]).flatMap(c=>c.allowed_sizes.filter(size=>!sold(c,size)).map(size=>({option_id:c.catalog_id+':'+size,catalog_id:c.catalog_id,scope:c.scope,color_id:c.color_id,size,size_system:c.size_system,variant_sku:null,supplier_sku:null,stock:null,stock_quantity:null,stock_status:'UNKNOWN',availability_status:'UNKNOWN',availability_source:null,availability_confirmation:'UNKNOWN',availability:'SIZE_CONFIRMATION_REQUIRED',...classificationPermissions('SIZE_CONFIRMATION_REQUIRED'),selectable_for_request:true})));
 }
-// Stage 5 (owner 2026-10-16): freshHours 36 — older supplier stock is not offered for payment; a warning after 24 h.
-const STOCK_WARNING_DEFAULT_HOURS=36,FRESH_WARN_HOURS=24;
-function classificationFreshnessHours(sid){
- const raw=S.cfg.suppliers.find(s=>s.id===sid)?.stock_freshness_hours;
- if(typeof raw==='number'&&Number.isFinite(raw)&&raw>0)return raw;
- const global=Number(S.cfg.freshHours);return Number.isFinite(global)&&global>0?global:STOCK_WARNING_DEFAULT_HOURS;
-}
+// Stage 5.1 (owner 2026-10-16): replaces freshHours 36. The owner's payFreshHours (72) and sellMaxDays (8) — see
+// freshnessPolicy(); SITE applies them to the data age at every read, PIM only reports and warns.
+function classificationFreshnessHours(){return freshnessPolicy().pay_fresh_hours;}
 function classificationObservedAt(o){
  // Legacy at is an observation only until separate import provenance exists.
  if(!o)return null;
@@ -10280,10 +10294,12 @@ function classificationPermissions(availability){
  const payment=availability==='IN_STOCK',request=['PREORDER','SIZE_CONFIRMATION_REQUIRED','ORDER_ON_REQUEST'].includes(availability);
  return {order_submission_allowed:payment||request,payment_allowed:payment,requires_order_confirmation:request||availability==='UNKNOWN'};
 }
+// Data age: the supplier's own observation time if the file has one, else the import time (stage 5.1: weekly imports
+// carry no supplier timestamp, so the import is what the data is as old as). stock_imported_at goes to SITE with the SKU.
 function classificationStockMetadata(o){
- const observed=classificationSourceTimestamp(classificationObservedAt(o)),updated=classificationSourceTimestamp(o?.source_updated_at),age=observed?Math.max(0,(Date.now()-observed)/3600000):null;
+ const observed=classificationSourceTimestamp(classificationObservedAt(o)),imported=classificationSourceTimestamp(o?.imported_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??imported,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
  const expires=classificationSourceTimestamp(o?.expires_at,true);
- return {stock_observed_at:observed,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>=classificationFreshnessHours(o?.sid),stock_warning_hours:classificationFreshnessHours(o?.sid),expires_at:expires};
+ return {stock_observed_at:observed,stock_imported_at:imported,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
 }
 const classificationLegacyOfferStale=offerStale;
 offerStale=function(o,cfg=S.cfg){return classificationReviewMode()||classificationEnabled()?false:classificationLegacyOfferStale(o,cfg);};
@@ -10299,10 +10315,13 @@ function classificationSelectedOffer(p,v,c=calc(p,v)){
  return selected?.sid&&v.offers?.[selected.sid]?{sid:selected.sid,...v.offers[selected.sid]}:selected;
 }
 function classificationManualStock(v){return !!(v?.manualFields?.stock||v?.manual_locks?.stock||v?.fieldMeta?.stock?.source==='manual'||v?.manualFields?.availability||v?.manual_locks?.availability);}
-// PIMC-P2: a supplier IN_STOCK observation older than the freshness limit is not payable — exported as UNKNOWN (the
-// manager confirms), unless the owner set the stock by hand. The availability change changes the model hash.
-function classificationStaleDowngrade(p,v,o=classificationSelectedOffer(p,v)){
- return !!o&&classificationStockMetadata(o).stale_source&&!classificationManualStock(v)&&classificationInventory(o,v).availability_status==='IN_STOCK';
+// Data age class of a SKU under the owner's policy: fresh | confirm | hidden; null without data age or with manual stock.
+// Stage 5.1: PIM no longer downgrades stale stock at export (stage 5 PIMC-P2 exported it as UNKNOWN = not orderable);
+// SITE applies the same classes at every read, because the data keeps aging between the weekly publications.
+function classificationFreshnessClass(p,v,o=classificationSelectedOffer(p,v)){
+ const age=o?classificationStockMetadata(o).stock_data_age_hours:null;
+ if(age==null||classificationManualStock(v))return null;
+ const policy=freshnessPolicy();return age<=policy.pay_fresh_hours?'fresh':age<=policy.sell_max_days*24?'confirm':'hidden';
 }
 function classificationAvailability(p,v){
  const c=calc(p,v),o=classificationSelectedOffer(p,v,c),metadata=classificationStockMetadata(o),inv=classificationInventory(o,v);
@@ -10315,7 +10334,6 @@ function classificationAvailability(p,v){
  if(!o||o.missing||o.discontinued||v.source_binding_status!=='CONFIRMED')return result('UNKNOWN');
  if(v.size_status==='SIZE_CONFIRMATION_REQUIRED'||v.size_confidence_tier!=='SAFE_AUTO')return result('SIZE_CONFIRMATION_REQUIRED');
  if(metadata.expires_at&&Date.now()>=metadata.expires_at)return result('UNKNOWN');
- if(classificationStaleDowngrade(p,v,o))return result('UNKNOWN');
  if(!['EXACT_SIZE','ONE_SIZE','NO_SIZE_REQUIRED'].includes(v.size_status))return result('UNKNOWN');
  return result(inv.availability_status,['IN_STOCK','OUT_OF_STOCK','PREORDER','ORDER_ON_REQUEST'].includes(inv.availability_status));
 }
@@ -10429,7 +10447,7 @@ applyImport=async function(options={}){if(classificationEnabled()&&S.imp?.previe
 
 const classificationPriceScope=categoryPriceScope;categoryPriceScope=function(p,rule){return classificationPriceScope(p.pricing_canonical_category_id?{...p,canonical_category_id:p.pricing_canonical_category_id,last_confirmed_category_id:p.pricing_canonical_category_id}:p,rule);};
 
-const classificationSupplierView=vSupplier;vSupplier=function(id){const supplier=S.cfg.suppliers.find(s=>s.id===id),policy=RubizhInventory.policy(supplier);return '<section class="panel"><h3>Правило доступності</h3><p>'+esc(policy.mode)+' · '+(policy.confirmed?'Підтверджено':'Потребує підтвердження постачальника')+'</p><p class="small">'+esc(policy.source_column||'Сигнал не визначено')+'. Кількість не створюється зі статусу. Давність дає лише попередження.</p></section>'+classificationSupplierView(id).replace('<label class="f">Приоритет',`<label class="f">Попередження про давність, годин<input type="number" min="0.1" step="0.1" data-sf="stock_freshness_hours" value="${esc(S.cfg.suppliers.find(s=>s.id===id)?.stock_freshness_hours??'')}" placeholder="${STOCK_WARNING_DEFAULT_HOURS}"></label><label class="f">Приоритет`);};
+const classificationSupplierView=vSupplier;vSupplier=function(id){const supplier=S.cfg.suppliers.find(s=>s.id===id),policy=RubizhInventory.policy(supplier);return '<section class="panel"><h3>Правило доступності</h3><p>'+esc(policy.mode)+' · '+(policy.confirmed?'Підтверджено':'Потребує підтвердження постачальника')+'</p><p class="small">'+esc(policy.source_column||'Сигнал не визначено')+'. Кількість не створюється зі статусу. Давність даних: пряма оплата до '+freshnessPolicy().pay_fresh_hours+' год, далі — після підтвердження менеджера, після '+freshnessPolicy().sell_max_days+' дн. товар приховано (спільні налаштування в «Ціни»).</p></section>'+classificationSupplierView(id);};
 
 // Production release: controlled migration on the existing production store.
 const PRODUCTION_RELEASE_VERSION='10.9.3',PRODUCTION_RC_COMMIT='440aa60ee42795ba8bf5167d8121470a5a56aab3';
@@ -10851,33 +10869,44 @@ async function finalPromoteNextKey(){
  const api={...c,key:c.keyNext};delete api.keyNext;S.cfg.siteApi=api;
  if(S.cfg.siteSync)delete S.cfg.siteSync.keyNotice;S.cfgDirty=true;await rememberSiteCredentials105(S.cfg);await persist();
 }
-// Stage 5 (owner 2026-10-16): supplier data freshness before publication. Older than 24 h → warning; older than the
-// freshness limit (freshHours 36) → publication stops until the owner confirms, showing how many products lose availability.
+// Stage 5.1 (owner 2026-10-16): supplier data freshness before publication, under the owner's freshnessPolicy(). Per
+// supplier (oldest READY SKU): «Дані постачальника X застаріють для прямої оплати через N год / товари буде приховано через
+// N днів». Publication stops only when products would be hidden on SITE (data older than sellMaxDays), until the owner
+// confirms, with the counter; data between the thresholds is published and sold after the manager confirms.
+function finalFreshnessHoursLeft(hours){return Math.max(1,Math.ceil(hours));}
 const finalFreshness=memoByData(()=>{
- const suppliers=new Map();let unavailable=0;
+ const policy=freshnessPolicy(),suppliers=new Map();let confirm=0,hidden=0;
  for(const p of S.products.values()){
-  if(finalDecision(p).state!=='READY')continue;let lost=false;
+  if(finalDecision(p).state!=='READY')continue;let open=false,aged=false,anyClass=false,lostPayment=false;
   for(const v of p.variants||[]){
-   const o=classificationSelectedOffer(p,v);if(!o?.sid)continue;const m=classificationStockMetadata(o),age=m.stock_data_age_hours;
-   if(age==null||age<=FRESH_WARN_HOURS)continue;
-   const state=m.stale_source?'block':'warn',prev=suppliers.get(o.sid);
-   if(!prev||age>prev.age_hours)suppliers.set(o.sid,{sid:o.sid,name:S.cfg.suppliers.find(s=>s.id===o.sid)?.name||o.sid,age_hours:age,state:prev?.state==='block'?'block':state});else if(state==='block')prev.state='block';
-   if(classificationStaleDowngrade(p,v,o))lost=true;
+   // A SKU without data age (no offer, no time, manual stock) keeps the model on SITE, exactly like SITE decides.
+   const o=classificationSelectedOffer(p,v);if(!o?.sid){open=true;continue;}
+   const cls=classificationFreshnessClass(p,v,o);if(cls===null){open=true;continue;}
+   anyClass=true;if(cls!=='hidden')open=true;if(cls!=='fresh')aged=true;if(cls==='confirm'&&classificationInventory(o,v).availability_status==='IN_STOCK')lostPayment=true;
+   const age=classificationStockMetadata(o).stock_data_age_hours,prev=suppliers.get(o.sid);
+   if(!prev||age>prev.age_hours)suppliers.set(o.sid,{sid:o.sid,name:S.cfg.suppliers.find(s=>s.id===o.sid)?.name||o.sid,age_hours:age,state:cls});
   }
-  if(lost)unavailable++;
+  if(anyClass&&!open)hidden++;else if(aged&&lostPayment)confirm++;
  }
  const list=[...suppliers.values()].sort((a,b)=>b.age_hours-a.age_hours);
- return {warn_hours:FRESH_WARN_HOURS,block_hours:classificationFreshnessHours(null),suppliers:list,blocked:list.some(s=>s.state==='block'),unavailable_products:unavailable};
+ return {pay_fresh_hours:policy.pay_fresh_hours,sell_max_days:policy.sell_max_days,suppliers:list,confirm_products:confirm,hidden_products:hidden,blocked:hidden>0};
 });
+function finalFreshnessLine(s,policy){
+ const name='Дані постачальника '+s.name,hide=policy.sell_max_days*24-s.age_hours;
+ if(s.state==='fresh')return name+' застаріють для прямої оплати через '+finalFreshnessHoursLeft(policy.pay_fresh_hours-s.age_hours)+' год / товари буде приховано через '+Math.max(1,Math.ceil(hide/24))+' днів';
+ if(s.state==='confirm')return name+' старші за '+policy.pay_fresh_hours+' год: оплата лише після підтвердження менеджера / товари буде приховано через '+Math.max(1,Math.ceil(hide/24))+' днів';
+ return name+' старші за '+policy.sell_max_days+' днів: товари приховано з сайту до оновлення прайсу';
+}
 function finalFreshnessBlock({allowStale=false}={}){
  const f=finalFreshness();if(!f.blocked||allowStale)return '';
- return 'STALE_DATA: данные поставщиков старше '+f.block_hours+' ч ('+f.suppliers.filter(s=>s.state==='block').map(s=>s.name).join(', ')+'). Скільки товарів стане недоступними: '+f.unavailable_products+'. Обновите прайсы или подтвердите публикацию.';
+ return 'STALE_DATA: данные поставщиков старше '+f.sell_max_days+' дн. ('+f.suppliers.filter(s=>s.state==='hidden').map(s=>s.name).join(', ')+'). Скільки товарів буде приховано: '+f.hidden_products+'. Обновите прайсы или подтвердите публикацию.';
 }
 function finalFreshnessNotice(){
  const f=finalFreshness();if(!f.suppliers.length)return '';
- const rows=f.suppliers.map(s=>'<li>'+esc(s.name)+': данные '+Math.floor(s.age_hours)+' ч назад'+(s.state==='block'?' — старше '+f.block_hours+' ч':' — старше '+f.warn_hours+' ч')+'</li>').join('');
- if(!f.blocked)return '<section class="panel" role="status"><h2>Данные поставщиков старше '+f.warn_hours+' ч</h2><ul>'+rows+'</ul><p>Обновите прайсы. После '+f.block_hours+' ч товары этих поставщиков перестанут быть доступными для оплаты.</p></section>';
- return '<section class="panel" role="alert"><h2>Публикация остановлена: данные старше '+f.block_hours+' ч</h2><ul>'+rows+'</ul><p><b>Скільки товарів стане недоступними: '+f.unavailable_products+'</b>. Их наличие уйдёт на сайт как «неизвестно» (оплата только после подтверждения менеджером).</p><button class="btn" data-final="publishStale">Опубликовать всё равно</button></section>';
+ const rows=f.suppliers.map(s=>'<li>'+esc(finalFreshnessLine(s,f))+'</li>').join('');
+ const counts=(f.confirm_products?'<p>Лише після підтвердження менеджера: <b>'+f.confirm_products+'</b> товарів.</p>':'')+(f.hidden_products?'<p><b>Скільки товарів буде приховано: '+f.hidden_products+'</b>.</p>':'');
+ if(!f.blocked)return '<section class="panel" role="'+(f.confirm_products?'alert':'status')+'"><h2>Давність даних постачальників</h2><ul>'+rows+'</ul>'+counts+'</section>';
+ return '<section class="panel" role="alert"><h2>Публикация остановлена: данные старше '+f.sell_max_days+' дн.</h2><ul>'+rows+'</ul>'+counts+'<p>Эти товары будут скрыты на сайте (не удалены), пока не придут свежие данные.</p><button class="btn" data-final="publishStale">Опубликовать всё равно</button></section>';
 }
 function finalCapabilitiesOk(caps){return caps&&Object.entries(PIM_SITE_CONTRACT).filter(([k])=>k!=='envelope').every(([k,v])=>Number(caps[k])===v)&&caps.envelope==='products';}
 async function finalPublish({allowStale=false}={}){
@@ -10887,18 +10916,21 @@ async function finalPublish({allowStale=false}={}){
  if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')throw Error('MIGRATION_PENDING: сначала завершите проверенную migration');
  const status=await finalSiteFetch('/pim/status');
  if(!finalCapabilitiesOk(status.capabilities))throw Error('SYNC_DISABLED: сайт не подтвердил contract v3 (contract/pricing/category/size/inventory/order versions). Передача остановлена.');
+ if(Number(status.capabilities?.freshness_policy_version)!==1)throw Error('SYNC_DISABLED: сайт не применяет правило свежести данных поставщиков (freshness_policy v1). Обновите сайт. Передача остановлена.');
  const published=await Store.get('site/v3/published')||{},hashes=await Store.get('site/v3/hashes')||{};
  const wire=pimSiteWire({published:Object.fromEntries(Object.entries(published).filter(([,x])=>!x.hidden))});
  const items=wire.products.map(p=>({p,h:finalModelHash(p)})),changed=items.filter(o=>hashes[o.p.id]!==o.h),catsChanged=S.cfg.siteV3CatHash!==wire.category_catalog_hash;
- if(!changed.length&&!wire.hide_ids.length&&!catsChanged)return {nothing:true,ready:items.length};
+ // Stage 5.1: the owner's freshness thresholds travel with chunk 0; a changed policy alone is worth a batch.
+ const freshness=freshnessPolicy(),freshnessChanged=stableValue105(S.cfg.siteFreshnessPolicy||null)!==stableValue105(freshness);
+ if(!changed.length&&!wire.hide_ids.length&&!catsChanged&&!freshnessChanged)return {nothing:true,ready:items.length};
  await requireBatchBackup('Перед отправкой на сайт');
  const chunks=[];for(let i=0;i<changed.length;i+=FINAL_SYNC_CHUNK)chunks.push(changed.slice(i,i+FINAL_SYNC_CHUNK));if(!chunks.length)chunks.push([]);
- const batchId='PB-'+wire.catalog_revision+'-'+fnvHash(stableValue105([changed.map(o=>o.h),wire.hide_ids,wire.category_catalog_hash]));
+ const batchId='PB-'+wire.catalog_revision+'-'+fnvHash(stableValue105([changed.map(o=>o.h),wire.hide_ids,wire.category_catalog_hash,freshness]));
  const head=Object.fromEntries(Object.keys(PIM_SITE_CONTRACT).filter(k=>k!=='envelope').map(k=>[k,wire[k]]));
  let ack=null;
  for(let i=0;i<chunks.length;i++){
   const last=i===chunks.length-1,body={...head,pim_version:wire.pim_version,currency:wire.currency,generated_at:wire.generated_at,catalog_revision:wire.catalog_revision,batch_id:batchId,chunk_index:i,chunk_count:chunks.length,products:chunks[i].map(o=>o.p),hide_ids:last?wire.hide_ids:[]};
-  if(i===0){body.categories=wire.categories;body.category_catalog_hash=wire.category_catalog_hash;}
+  if(i===0){body.categories=wire.categories;body.category_catalog_hash=wire.category_catalog_hash;body.freshness_policy=freshness;}
   const j=await finalSiteFetch('/pim/sync',{method:'POST',body:JSON.stringify(body)});
   if(j.batch_id!==batchId||j.chunk_index!==i)throw Error('Сайт не подтвердил часть пакета '+(i+1)+'/'+chunks.length);
   if(last)ack=j;
@@ -10916,7 +10948,7 @@ async function finalPublish({allowStale=false}={}){
  let costsError='';try{await finalSiteFetch('/pim/costs',{method:'POST',body:JSON.stringify(pimSitePrivateCosts())});}catch(e){costsError=String(e?.message||e);}
  // 5-4: a copy of the published state outside IndexedDB; a failure is reported, the publication stands.
  let backupError='';try{await pimRemoteBackup('Після публікації',{afterPublish:true});}catch(e){backupError=String(e?.message||e);}
- S.cfg.siteV3CatHash=wire.category_catalog_hash;S.cfg.siteSync={...(S.cfg.siteSync||{}),at,mode:'v3',sent:changed.length,hidden:wire.hide_ids.length,errors:errors.slice(0,50),batch_id:batchId,catalog_revision:ack.catalog_revision,lastError:'',costsError,backupError};S.cfgDirty=true;
+ S.cfg.siteV3CatHash=wire.category_catalog_hash;S.cfg.siteFreshnessPolicy=freshness;S.cfg.siteSync={...(S.cfg.siteSync||{}),at,mode:'v3',sent:changed.length,hidden:wire.hide_ids.length,errors:errors.slice(0,50),batch_id:batchId,catalog_revision:ack.catalog_revision,lastError:'',costsError,backupError};S.cfgDirty=true;
  if(!await persist())throw Error('Ответ сайта получен, но локальное сохранение не завершено');
  FINAL_UI.hashes=hashes;return {batch_id:batchId,sent:changed.length,hidden:wire.hide_ids.length,errors:errors.length,...(costsError?{costs_error:costsError}:{}),...(backupError?{backup_error:backupError}:{})};
 }

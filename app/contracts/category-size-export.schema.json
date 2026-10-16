@@ -425,6 +425,10 @@
             ],
             "minimum": 1
           },
+          "stock_imported_at": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
           "source_updated_at": {
             "type": [
               "integer",

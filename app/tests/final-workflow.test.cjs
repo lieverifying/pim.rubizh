@@ -93,9 +93,9 @@ test('PIMC-P1: category review causes a READY exit and recovery while unknown mo
  assert.equal(h.run('finalDecision(S.products.get("p-a")).state'),'READY');
  assert.deepEqual(snapshot().hide_ids,[]);assert.equal(snapshot().products.length,1);
 });
-function mockSite(h,{caps=true,dropResult=false}={}){
+function mockSite(h,{caps=true,dropResult=false,freshness=true}={}){
  const calls=[];h.ctx.siteCall=async(url,opt)=>{calls.push({url,body:opt.body?JSON.parse(opt.body):null});const path=new URL(url).pathname;
-  if(path.endsWith('/pim/status'))return {ok:true,json:async()=>({ok:true,capabilities:caps?{contract_version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,envelope:'products'}:{pricing_policy_version:1}})};
+  if(path.endsWith('/pim/status'))return {ok:true,json:async()=>({ok:true,capabilities:caps?{contract_version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,envelope:'products',...(freshness?{freshness_policy_version:1}:{})}:{pricing_policy_version:1}})};
   const b=JSON.parse(opt.body),last=b.chunk_index===b.chunk_count-1;
   return {ok:true,json:async()=>last?{ok:true,batch_id:b.batch_id,chunk_index:b.chunk_index,status:'COMMITTED',contract_version:3,catalog_revision:'rev-1',results:(dropResult?b.products.slice(1):b.products).map(p=>({id:p.id,status:'created',contract_version:3})),hidden_ids:b.hide_ids}:{ok:true,batch_id:b.batch_id,chunk_index:b.chunk_index,status:'STAGED'}};};
  h.run('PRODUCTION_MIGRATION.state="ready";FINAL_NET.fetch=siteCall;S.cfg.siteApi={url:"https://shop.invalid/api",key:"k"};requireBatchBackup=async()=>({local:true});');return calls;
@@ -112,6 +112,16 @@ test('publisher sends the exact wire, records only acknowledged models and is id
  assert.equal(body.contract_version,3);assert.equal(body.products[0].variants[0].pricing_policy_version,1);assert.equal(body.categories.length,143);assert.deepEqual(body.hide_ids,[]);
  assert.deepEqual(Object.keys(await h.run('Store.get("site/v3/hashes")')),['p-a']);
  const again=await h.run('sitePublish("delta")');assert.equal(again.nothing,true);assert.equal(calls.filter(c=>c.url.endsWith('/pim/sync')).length,1);
+});
+test('stage 5.1: the owner freshness policy travels in chunk 0; a SITE that does not apply it gets nothing; a policy change alone is published',async()=>{
+ const old=setup({production:true}),oldCalls=mockSite(old,{freshness:false});
+ await assert.rejects(old.run('sitePublish("delta")'),/freshness_policy v1/);assert.ok(oldCalls.every(c=>!c.url.endsWith('/pim/sync')),'nothing sent to a SITE without the rule');
+ const h=setup({production:true}),calls=mockSite(h);
+ await h.run('sitePublish("delta")');let sync=calls.filter(c=>c.url.endsWith('/pim/sync'));
+ assert.deepEqual(sync[0].body.freshness_policy,{version:1,pay_fresh_hours:72,sell_max_days:8});
+ assert.equal((await h.run('sitePublish("delta")')).nothing,true,'unchanged policy and catalog → nothing');
+ h.run('S.cfg.payFreshHours=48;S.cfg.sellMaxDays=5');const r=await h.run('sitePublish("delta")');assert.notEqual(r.nothing,true);
+ sync=calls.filter(c=>c.url.endsWith('/pim/sync'));assert.deepEqual(sync.at(-1).body.freshness_policy,{version:1,pay_fresh_hours:48,sell_max_days:5});assert.notEqual(sync.at(-1).body.batch_id,sync[0].body.batch_id);
 });
 test('incomplete ACK is not recorded as published',async()=>{
  const h=setup({production:true});mockSite(h,{dropResult:true});

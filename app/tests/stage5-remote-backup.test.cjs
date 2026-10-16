@@ -19,7 +19,7 @@ async function setup(){
    if(sha!==opt.headers['X-Backup-Sha256'])return json({ok:false,error:'SHA256_MISMATCH'},422);const id='pim-20261016T120000'+String(site.copies.length).padStart(6,'0')+'Z-'+sha.slice(0,12);site.copies.unshift({id,bytes,sha256:sha,label:decodeURIComponent(opt.headers['X-Backup-Label'])});return json({ok:true,id,sha256:sha,size:bytes.length});}
   if(path.endsWith('/pim/backups'))return json({ok:true,keep:14,backups:site.copies.map(c=>({id:c.id,sha256:c.sha256,size:c.bytes.length,label:c.label,at:'2026-10-16T12:00:00Z'}))});
   const m=path.match(/\/pim\/backups\/(.+)$/);if(m){const c=site.copies.find(c=>c.id===m[1]);const bytes=site.tamper?Buffer.concat([c.bytes,Buffer.from('x')]):c.bytes;return {ok:true,status:200,json:async()=>{throw Error('binary');},arrayBuffer:async()=>bytes};}
-  if(path.endsWith('/pim/status'))return json({ok:true,capabilities:{contract_version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,envelope:'products'}});
+  if(path.endsWith('/pim/status'))return json({ok:true,capabilities:{contract_version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,envelope:'products',freshness_policy_version:1}});
   if(path.endsWith('/pim/costs'))return json({ok:true,stored:1});
   const b=JSON.parse(opt.body);return json({ok:true,batch_id:b.batch_id,chunk_index:b.chunk_index,status:'COMMITTED',contract_version:3,catalog_revision:'rev-1',results:b.products.map(x=>({id:x.id,status:'created'})),hidden_ids:b.hide_ids});};
  h.run('FINAL_NET.fetch=siteCall;requireBatchBackup=async()=>({local:true});');

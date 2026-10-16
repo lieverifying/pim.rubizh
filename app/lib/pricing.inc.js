@@ -55,9 +55,25 @@ async function ensurePricingPolicy(){
   S.pricingPolicyError='';toast('Применена маржа 30% / 25% / 20%. Скидки защищены остатком 15% после доната.');return true;
  }catch(error){S.pricingPolicyError=error.message||String(error);if(changed){loadStateData(backup);markAllDirty();await persist();}throw error;}
 }
+// Stage 5.1 (owner 2026-10-16), replaces the single freshHours 36: supplier data age (supplier observation time, else the
+// import time) ≤ payFreshHours → direct payment; up to sellMaxDays → sold only after the manager confirms; older → hidden
+// on SITE until fresh data. Owner settings; sent to SITE with every sync batch (freshness_policy v1), SITE applies them.
+const FRESHNESS_DEFAULT=Object.freeze({pay_fresh_hours:72,sell_max_days:8});
+function freshnessPolicyErrors(cfg){
+ const pay=cfg?.payFreshHours,sell=cfg?.sellMaxDays,errors=[];
+ if(!Number.isInteger(pay)||pay<1||pay>336)errors.push('Прямая оплата: целое число часов от 1 до 336.');
+ if(!Number.isInteger(sell)||sell<1||sell>60)errors.push('Скрытие товара: целое число дней от 1 до 60.');
+ if(!errors.length&&sell*24<=pay)errors.push('Срок скрытия ('+sell+' дн.) должен быть позже срока прямой оплаты ('+pay+' ч).');
+ return errors;
+}
+function freshnessPolicy(cfg=S.cfg){
+ const own={payFreshHours:cfg?.payFreshHours??FRESHNESS_DEFAULT.pay_fresh_hours,sellMaxDays:cfg?.sellMaxDays??FRESHNESS_DEFAULT.sell_max_days};
+ return freshnessPolicyErrors(own).length?{version:1,...FRESHNESS_DEFAULT}:{version:1,pay_fresh_hours:own.payFreshHours,sell_max_days:own.sellMaxDays};
+}
 async function savePriceSettings(){
  readPrices();if(!S.priceDraft)return false;
  const draft=structuredClone(S.priceDraft),before=structuredClone(S.cfg);
+ const freshness=freshnessPolicyErrors(draft);if(freshness.length)throw Error(freshness.join(' '));
  for(const key of ['taxPct','acquiringPct','minMargin','bigPriceMargin','kitMargin','discountMarginFloor','donPct'])if(!Number.isFinite(draft[key])||draft[key]<0||draft[key]>=100)throw Error('Некорректный процент: '+key);
  const fees=draft.taxPct+draft.acquiringPct;
  if(fees+Math.max(draft.minMargin,draft.bigPriceMargin,draft.kitMargin)>=100||fees+draft.donPct+draft.discountMarginFloor>=100)throw Error('Маржа, комиссии и донат не оставляют места для закупки. Исправьте проценты.');

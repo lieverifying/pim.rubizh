@@ -292,33 +292,44 @@ async function finalPromoteNextKey(){
  const api={...c,key:c.keyNext};delete api.keyNext;S.cfg.siteApi=api;
  if(S.cfg.siteSync)delete S.cfg.siteSync.keyNotice;S.cfgDirty=true;await rememberSiteCredentials105(S.cfg);await persist();
 }
-// Stage 5 (owner 2026-10-16): supplier data freshness before publication. Older than 24 h → warning; older than the
-// freshness limit (freshHours 36) → publication stops until the owner confirms, showing how many products lose availability.
+// Stage 5.1 (owner 2026-10-16): supplier data freshness before publication, under the owner's freshnessPolicy(). Per
+// supplier (oldest READY SKU): «Дані постачальника X застаріють для прямої оплати через N год / товари буде приховано через
+// N днів». Publication stops only when products would be hidden on SITE (data older than sellMaxDays), until the owner
+// confirms, with the counter; data between the thresholds is published and sold after the manager confirms.
+function finalFreshnessHoursLeft(hours){return Math.max(1,Math.ceil(hours));}
 const finalFreshness=memoByData(()=>{
- const suppliers=new Map();let unavailable=0;
+ const policy=freshnessPolicy(),suppliers=new Map();let confirm=0,hidden=0;
  for(const p of S.products.values()){
-  if(finalDecision(p).state!=='READY')continue;let lost=false;
+  if(finalDecision(p).state!=='READY')continue;let open=false,aged=false,anyClass=false,lostPayment=false;
   for(const v of p.variants||[]){
-   const o=classificationSelectedOffer(p,v);if(!o?.sid)continue;const m=classificationStockMetadata(o),age=m.stock_data_age_hours;
-   if(age==null||age<=FRESH_WARN_HOURS)continue;
-   const state=m.stale_source?'block':'warn',prev=suppliers.get(o.sid);
-   if(!prev||age>prev.age_hours)suppliers.set(o.sid,{sid:o.sid,name:S.cfg.suppliers.find(s=>s.id===o.sid)?.name||o.sid,age_hours:age,state:prev?.state==='block'?'block':state});else if(state==='block')prev.state='block';
-   if(classificationStaleDowngrade(p,v,o))lost=true;
+   // A SKU without data age (no offer, no time, manual stock) keeps the model on SITE, exactly like SITE decides.
+   const o=classificationSelectedOffer(p,v);if(!o?.sid){open=true;continue;}
+   const cls=classificationFreshnessClass(p,v,o);if(cls===null){open=true;continue;}
+   anyClass=true;if(cls!=='hidden')open=true;if(cls!=='fresh')aged=true;if(cls==='confirm'&&classificationInventory(o,v).availability_status==='IN_STOCK')lostPayment=true;
+   const age=classificationStockMetadata(o).stock_data_age_hours,prev=suppliers.get(o.sid);
+   if(!prev||age>prev.age_hours)suppliers.set(o.sid,{sid:o.sid,name:S.cfg.suppliers.find(s=>s.id===o.sid)?.name||o.sid,age_hours:age,state:cls});
   }
-  if(lost)unavailable++;
+  if(anyClass&&!open)hidden++;else if(aged&&lostPayment)confirm++;
  }
  const list=[...suppliers.values()].sort((a,b)=>b.age_hours-a.age_hours);
- return {warn_hours:FRESH_WARN_HOURS,block_hours:classificationFreshnessHours(null),suppliers:list,blocked:list.some(s=>s.state==='block'),unavailable_products:unavailable};
+ return {pay_fresh_hours:policy.pay_fresh_hours,sell_max_days:policy.sell_max_days,suppliers:list,confirm_products:confirm,hidden_products:hidden,blocked:hidden>0};
 });
+function finalFreshnessLine(s,policy){
+ const name='Дані постачальника '+s.name,hide=policy.sell_max_days*24-s.age_hours;
+ if(s.state==='fresh')return name+' застаріють для прямої оплати через '+finalFreshnessHoursLeft(policy.pay_fresh_hours-s.age_hours)+' год / товари буде приховано через '+Math.max(1,Math.ceil(hide/24))+' днів';
+ if(s.state==='confirm')return name+' старші за '+policy.pay_fresh_hours+' год: оплата лише після підтвердження менеджера / товари буде приховано через '+Math.max(1,Math.ceil(hide/24))+' днів';
+ return name+' старші за '+policy.sell_max_days+' днів: товари приховано з сайту до оновлення прайсу';
+}
 function finalFreshnessBlock({allowStale=false}={}){
  const f=finalFreshness();if(!f.blocked||allowStale)return '';
- return 'STALE_DATA: данные поставщиков старше '+f.block_hours+' ч ('+f.suppliers.filter(s=>s.state==='block').map(s=>s.name).join(', ')+'). Скільки товарів стане недоступними: '+f.unavailable_products+'. Обновите прайсы или подтвердите публикацию.';
+ return 'STALE_DATA: данные поставщиков старше '+f.sell_max_days+' дн. ('+f.suppliers.filter(s=>s.state==='hidden').map(s=>s.name).join(', ')+'). Скільки товарів буде приховано: '+f.hidden_products+'. Обновите прайсы или подтвердите публикацию.';
 }
 function finalFreshnessNotice(){
  const f=finalFreshness();if(!f.suppliers.length)return '';
- const rows=f.suppliers.map(s=>'<li>'+esc(s.name)+': данные '+Math.floor(s.age_hours)+' ч назад'+(s.state==='block'?' — старше '+f.block_hours+' ч':' — старше '+f.warn_hours+' ч')+'</li>').join('');
- if(!f.blocked)return '<section class="panel" role="status"><h2>Данные поставщиков старше '+f.warn_hours+' ч</h2><ul>'+rows+'</ul><p>Обновите прайсы. После '+f.block_hours+' ч товары этих поставщиков перестанут быть доступными для оплаты.</p></section>';
- return '<section class="panel" role="alert"><h2>Публикация остановлена: данные старше '+f.block_hours+' ч</h2><ul>'+rows+'</ul><p><b>Скільки товарів стане недоступними: '+f.unavailable_products+'</b>. Их наличие уйдёт на сайт как «неизвестно» (оплата только после подтверждения менеджером).</p><button class="btn" data-final="publishStale">Опубликовать всё равно</button></section>';
+ const rows=f.suppliers.map(s=>'<li>'+esc(finalFreshnessLine(s,f))+'</li>').join('');
+ const counts=(f.confirm_products?'<p>Лише після підтвердження менеджера: <b>'+f.confirm_products+'</b> товарів.</p>':'')+(f.hidden_products?'<p><b>Скільки товарів буде приховано: '+f.hidden_products+'</b>.</p>':'');
+ if(!f.blocked)return '<section class="panel" role="'+(f.confirm_products?'alert':'status')+'"><h2>Давність даних постачальників</h2><ul>'+rows+'</ul>'+counts+'</section>';
+ return '<section class="panel" role="alert"><h2>Публикация остановлена: данные старше '+f.sell_max_days+' дн.</h2><ul>'+rows+'</ul>'+counts+'<p>Эти товары будут скрыты на сайте (не удалены), пока не придут свежие данные.</p><button class="btn" data-final="publishStale">Опубликовать всё равно</button></section>';
 }
 function finalCapabilitiesOk(caps){return caps&&Object.entries(PIM_SITE_CONTRACT).filter(([k])=>k!=='envelope').every(([k,v])=>Number(caps[k])===v)&&caps.envelope==='products';}
 async function finalPublish({allowStale=false}={}){
@@ -328,18 +339,21 @@ async function finalPublish({allowStale=false}={}){
  if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')throw Error('MIGRATION_PENDING: сначала завершите проверенную migration');
  const status=await finalSiteFetch('/pim/status');
  if(!finalCapabilitiesOk(status.capabilities))throw Error('SYNC_DISABLED: сайт не подтвердил contract v3 (contract/pricing/category/size/inventory/order versions). Передача остановлена.');
+ if(Number(status.capabilities?.freshness_policy_version)!==1)throw Error('SYNC_DISABLED: сайт не применяет правило свежести данных поставщиков (freshness_policy v1). Обновите сайт. Передача остановлена.');
  const published=await Store.get('site/v3/published')||{},hashes=await Store.get('site/v3/hashes')||{};
  const wire=pimSiteWire({published:Object.fromEntries(Object.entries(published).filter(([,x])=>!x.hidden))});
  const items=wire.products.map(p=>({p,h:finalModelHash(p)})),changed=items.filter(o=>hashes[o.p.id]!==o.h),catsChanged=S.cfg.siteV3CatHash!==wire.category_catalog_hash;
- if(!changed.length&&!wire.hide_ids.length&&!catsChanged)return {nothing:true,ready:items.length};
+ // Stage 5.1: the owner's freshness thresholds travel with chunk 0; a changed policy alone is worth a batch.
+ const freshness=freshnessPolicy(),freshnessChanged=stableValue105(S.cfg.siteFreshnessPolicy||null)!==stableValue105(freshness);
+ if(!changed.length&&!wire.hide_ids.length&&!catsChanged&&!freshnessChanged)return {nothing:true,ready:items.length};
  await requireBatchBackup('Перед отправкой на сайт');
  const chunks=[];for(let i=0;i<changed.length;i+=FINAL_SYNC_CHUNK)chunks.push(changed.slice(i,i+FINAL_SYNC_CHUNK));if(!chunks.length)chunks.push([]);
- const batchId='PB-'+wire.catalog_revision+'-'+fnvHash(stableValue105([changed.map(o=>o.h),wire.hide_ids,wire.category_catalog_hash]));
+ const batchId='PB-'+wire.catalog_revision+'-'+fnvHash(stableValue105([changed.map(o=>o.h),wire.hide_ids,wire.category_catalog_hash,freshness]));
  const head=Object.fromEntries(Object.keys(PIM_SITE_CONTRACT).filter(k=>k!=='envelope').map(k=>[k,wire[k]]));
  let ack=null;
  for(let i=0;i<chunks.length;i++){
   const last=i===chunks.length-1,body={...head,pim_version:wire.pim_version,currency:wire.currency,generated_at:wire.generated_at,catalog_revision:wire.catalog_revision,batch_id:batchId,chunk_index:i,chunk_count:chunks.length,products:chunks[i].map(o=>o.p),hide_ids:last?wire.hide_ids:[]};
-  if(i===0){body.categories=wire.categories;body.category_catalog_hash=wire.category_catalog_hash;}
+  if(i===0){body.categories=wire.categories;body.category_catalog_hash=wire.category_catalog_hash;body.freshness_policy=freshness;}
   const j=await finalSiteFetch('/pim/sync',{method:'POST',body:JSON.stringify(body)});
   if(j.batch_id!==batchId||j.chunk_index!==i)throw Error('Сайт не подтвердил часть пакета '+(i+1)+'/'+chunks.length);
   if(last)ack=j;
@@ -357,7 +371,7 @@ async function finalPublish({allowStale=false}={}){
  let costsError='';try{await finalSiteFetch('/pim/costs',{method:'POST',body:JSON.stringify(pimSitePrivateCosts())});}catch(e){costsError=String(e?.message||e);}
  // 5-4: a copy of the published state outside IndexedDB; a failure is reported, the publication stands.
  let backupError='';try{await pimRemoteBackup('Після публікації',{afterPublish:true});}catch(e){backupError=String(e?.message||e);}
- S.cfg.siteV3CatHash=wire.category_catalog_hash;S.cfg.siteSync={...(S.cfg.siteSync||{}),at,mode:'v3',sent:changed.length,hidden:wire.hide_ids.length,errors:errors.slice(0,50),batch_id:batchId,catalog_revision:ack.catalog_revision,lastError:'',costsError,backupError};S.cfgDirty=true;
+ S.cfg.siteV3CatHash=wire.category_catalog_hash;S.cfg.siteFreshnessPolicy=freshness;S.cfg.siteSync={...(S.cfg.siteSync||{}),at,mode:'v3',sent:changed.length,hidden:wire.hide_ids.length,errors:errors.slice(0,50),batch_id:batchId,catalog_revision:ack.catalog_revision,lastError:'',costsError,backupError};S.cfgDirty=true;
  if(!await persist())throw Error('Ответ сайта получен, но локальное сохранение не завершено');
  FINAL_UI.hashes=hashes;return {batch_id:batchId,sent:changed.length,hidden:wire.hide_ids.length,errors:errors.length,...(costsError?{costs_error:costsError}:{}),...(backupError?{backup_error:backupError}:{})};
 }

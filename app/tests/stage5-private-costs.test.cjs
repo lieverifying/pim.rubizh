@@ -39,7 +39,7 @@ test('contract fixture: the exporter output on the synthetic fixture catalog equ
 });
 function mockSite(h,{commit=true,costsFail=false}={}){
  const calls=[];h.ctx.siteCall=async(url,opt)=>{const p=new URL(url).pathname;calls.push({path:p,body:opt.body?JSON.parse(opt.body):null});
-  if(p.endsWith('/pim/status'))return {ok:true,json:async()=>({ok:true,capabilities:{contract_version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,envelope:'products'}})};
+  if(p.endsWith('/pim/status'))return {ok:true,json:async()=>({ok:true,capabilities:{contract_version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,envelope:'products',freshness_policy_version:1}})};
   if(p.endsWith('/pim/costs'))return costsFail?{ok:false,status:500,json:async()=>({ok:false,error:'boom'})}:{ok:true,json:async()=>({ok:true,stored:1})};
   if(p.endsWith('/pim/backup'))return {ok:true,json:async()=>({ok:true,id:'pim-x'})};
   const b=JSON.parse(opt.body);

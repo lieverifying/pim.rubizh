@@ -3,7 +3,7 @@
   "exporter": "pimSiteWire() in app/lib/final-workflow.inc.js",
   "catalog_input": "SYNTHETIC_REPRESENTATIVE (not owner data)",
   "envelope": "products",
-  "sha256": "c21fe16c98ad9360555ec45d6be266669e3c77dc9c0151bc28780927448a1f1b",
+  "sha256": "3094c624c18d1bbcc1a3ef0bad9ba34fb452a1e9a5db7232bfe04b31ee75328a",
   "products": 4,
   "skus": 8,
   "decisions": [
