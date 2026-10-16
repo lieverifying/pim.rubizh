@@ -31,6 +31,7 @@ function build(){
  h.run('for(const p of S.products.values())classificationApplyProduct(p);rebuildIndex();bumpData();');
  return h;
 }
+if(require.main!==module){module.exports={build,FIXED_NOW};return;}
 const h=build(),wire=JSON.parse(JSON.stringify(h.run('pimSiteWire()'))),decisions=JSON.parse(JSON.stringify(h.run('[...S.products.values()].map(p=>({id:p.id,state:finalDecision(p).state,reasons:finalDecision(p).reasons.map(r=>r.code)}))')));
 const text=JSON.stringify(wire,null,2)+'\n';fs.mkdirSync(path.dirname(out),{recursive:true});fs.writeFileSync(out,text);
 const manifest={generator:'app/tools/export-wire-fixture.cjs',exporter:'pimSiteWire() in app/lib/final-workflow.inc.js',catalog_input:'SYNTHETIC_REPRESENTATIVE (not owner data)',envelope:'products',sha256:crypto.createHash('sha256').update(text).digest('hex'),products:wire.products.length,skus:wire.products.reduce((n,p)=>n+p.variants.length,0),decisions};

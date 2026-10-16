@@ -199,6 +199,16 @@ function pimSiteWire({published={}}={}){
  const categories=categoryPublicCatalogue();
  return {contract_version:3,version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,pim_version:PIM_VERSION,currency:'UAH',generated_at:new Date().toISOString(),catalog_revision:fnvHash(stableValue105(products.map(finalModelHash))),category_catalog_hash:fnvHash(JSON.stringify(categories)),categories,products,hide_ids:finalExplicitHideIds(published)};
 }
+// OD-4.1 (stage 5): the supplier payout per SKU for CRM gross profit — a separate PRIVATE contract
+// (rubizh-pim-private-costs v1, SITE POST /api/pim/costs). Never part of pimSiteWire()/buildFeed(); no supplier names.
+function pimSitePrivateCosts(){
+ const costs=[];
+ for(const p of [...S.products.values()].filter(p=>finalDecision(p).state==='READY').sort((a,b)=>a.id.localeCompare(b.id)))
+  for(const v of p.variants||[]){const payout=Number(calc(p,v).payout);if(!(payout>0)||!/^[A-Za-z0-9._-]{1,64}$/.test(String(v.sku||'')))continue;costs.push({sku:String(v.sku),supplier_payout_minor:Math.round(payout*100)});}
+ costs.sort((a,b)=>a.sku<b.sku?-1:a.sku>b.sku?1:0);
+ const unique=costs.filter((c,i)=>!i||c.sku!==costs[i-1].sku);
+ return {private_contract:'rubizh-pim-private-costs',version:1,currency:'UAH',generated_at:new Date().toISOString(),revision:fnvHash(JSON.stringify(unique)),costs:unique};
+}
 // classificationExport-based review feed now uses the same exact exporter.
 const finalPreviousBuildFeed=buildFeed;
 buildFeed=function(){
@@ -276,13 +286,15 @@ async function finalPublish({allowStale=false}={}){
  for(const r of results){if(r.status==='error'){errors.push(r);continue;}hashes[r.id]=sent.get(r.id);published[r.id]={confirmed_at:at,hidden:false,catalog_revision:ack.catalog_revision};}
  for(const id of wire.hide_ids){published[id]={...(published[id]||{}),hidden:true,confirmed_at:at};delete hashes[id];}
  await Store.set('site/v3/hashes',hashes);await Store.set('site/v3/published',published);
- S.cfg.siteV3CatHash=wire.category_catalog_hash;S.cfg.siteSync={...(S.cfg.siteSync||{}),at,mode:'v3',sent:changed.length,hidden:wire.hide_ids.length,errors:errors.slice(0,50),batch_id:batchId,catalog_revision:ack.catalog_revision,lastError:''};S.cfgDirty=true;
+ // OD-4.1: private payouts only after the site COMMITTED the catalog; a failure is reported, the publication stands.
+ let costsError='';try{await finalSiteFetch('/pim/costs',{method:'POST',body:JSON.stringify(pimSitePrivateCosts())});}catch(e){costsError=String(e?.message||e);}
+ S.cfg.siteV3CatHash=wire.category_catalog_hash;S.cfg.siteSync={...(S.cfg.siteSync||{}),at,mode:'v3',sent:changed.length,hidden:wire.hide_ids.length,errors:errors.slice(0,50),batch_id:batchId,catalog_revision:ack.catalog_revision,lastError:'',costsError};S.cfgDirty=true;
  if(!await persist())throw Error('Ответ сайта получен, но локальное сохранение не завершено');
- FINAL_UI.hashes=hashes;return {batch_id:batchId,sent:changed.length,hidden:wire.hide_ids.length,errors:errors.length};
+ FINAL_UI.hashes=hashes;return {batch_id:batchId,sent:changed.length,hidden:wire.hide_ids.length,errors:errors.length,...(costsError?{costs_error:costsError}:{})};
 }
 sitePublish=async function(mode,{silent=false,allowStale=false}={}){
  if(classificationReviewMode())throw Error('REVIEW_ONLY: publication and /pim/sync disabled');
- try{const r=await finalPublish({allowStale});if(!silent)toast(r.nothing?'На сайте всё актуально':'Сайт обновлён: моделей '+r.sent+', скрыто '+r.hidden+(r.errors?', ошибок '+r.errors:''));return r;}
+ try{const r=await finalPublish({allowStale});if(!silent)toast(r.nothing?'На сайте всё актуально':'Сайт обновлён: моделей '+r.sent+', скрыто '+r.hidden+(r.errors?', ошибок '+r.errors:'')+(r.costs_error?'. Себестоимость не передана: '+r.costs_error:''));return r;}
  catch(error){S.cfg.siteSync={...(S.cfg.siteSync||{}),lastError:error.message||String(error),lastErrorAt:Date.now()};S.cfgDirty=true;throw error;}
 };
 siteAutoTick=function(){return false;};
