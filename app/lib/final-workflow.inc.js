@@ -244,9 +244,9 @@ async function pimRemoteBackup(label,{afterPublish=false}={}){
  if(!siteReady())throw Error('SYNC_DISABLED: укажите адрес API сайта и ключ PIM.');
  const last=await Store.get('autobak_meta/remote');
  if(!afterPublish&&last?.at&&Date.now()-last.at<PIM_REMOTE_BACKUP_GAP)return {skipped:true,last};
- const d=S.snap?await persistedStateData(label):backupData(label);await attachBackupJournal104(d);d.docFiles=await docFilesB64();d.format='rubizh-pim-backup';d.label=label;d.pimVersion=PIM_VERSION;
+ const d=S.snap?await persistedStateData(label):backupData(label);await attachBackupJournal104(d);d.cfg=sanitizePortableConfig(d.cfg);d.docFiles=await docFilesB64();d.format='rubizh-pim-backup';d.label=label;d.pimVersion=PIM_VERSION;
  const text=JSON.stringify(d),c=siteCfg();
- for(const secret of [c.key,c.keyNext])if(secret&&String(secret).length>=16&&text.includes(secret))throw Error('Копія містить ключ PIM — на сайт не відправлено.');
+ for(const secret of [c.key,c.keyNext])if(secret&&String(secret).length>=8&&text.includes(secret))throw Error('Копія містить ключ PIM — на сайт не відправлено.');
  const {blob}=await gzipBlob(text),bytes=await blob.arrayBuffer(),sha256=finalHex(await crypto.subtle.digest('SHA-256',bytes));
  const j=await finalSiteFetch('/pim/backup',{method:'POST',body:blob,headers:{'Content-Type':'application/gzip','X-Backup-Sha256':sha256,'X-Backup-Label':encodeURIComponent(String(label).slice(0,80))}});
  if(j.sha256&&j.sha256!==sha256)throw Error('Сайт зберіг копію з іншою контрольною сумою.');
@@ -260,8 +260,9 @@ async function finalRemoteRestore(id){
  if(r.status===401&&c.keyNext)({r}=await finalSiteRequest('/pim/backups/'+encodeURIComponent(id),{},c.keyNext,{raw:true}));
  if(!r.ok)throw Error('Сайт не віддав копію ('+r.status+').');
  const bytes=await r.arrayBuffer();if(finalHex(await crypto.subtle.digest('SHA-256',bytes))!==meta.sha256)throw Error('Копія пошкоджена: контрольна сума не збігається.');
- const d=JSON.parse(await gunzipText(new Blob([bytes]),true));
- if(!d||d.format!=='rubizh-pim-backup')throw Error('Це не копія бази PIM.');
+ const plain=await gunzipText(new Blob([bytes]),true);if(plain.length>512*1024*1024)throw Error('Копія завелика для відновлення.');
+ const d=JSON.parse(plain);
+ if(!d||d.format!=='rubizh-pim-backup'||typeof d.cfg!=='object'||!Array.isArray(d.products))throw Error('Це не копія бази PIM.');
  // The copy has no credentials: keep the current site connection and the stored auth/ rows; operational gates off.
  const creds={url:c.url,key:c.key,...(c.keyNext?{keyNext:c.keyNext}:{})};
  const ok=await applyRestoreData(d);

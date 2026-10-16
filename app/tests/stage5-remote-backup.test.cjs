@@ -67,3 +67,14 @@ test('the daily copy is also sent to the site; a tick without a new daily copy s
  const {h,site}=await setup();await h.run('dailyBackupTick()');assert.equal(site.copies.length,1);assert.equal(site.copies[0].label,'Ежедневная');
  await h.run('dailyBackupTick()');assert.equal(site.copies.length,1);
 });
+test('review of stage 5: credential-like settings (…Token, …Password, …Secret, …ApiKey) never reach the uploaded copy',async()=>{
+ const {h,site}=await setup();h.run('S.cfg.telegramBotToken="tg-secret-0001";S.cfg.supplierFeeds={a:{login:"x",feedPassword:"pw-secret-0002",apiKey:"ak-secret-0003"}};S.cfg.npClientSecret="np-secret-0004";S.cfgDirty=true');await h.run('persist()');
+ await h.run('pimRemoteBackup("x",{afterPublish:true})');const plain=zlib.gunzipSync(site.copies[0].bytes).toString('utf8');
+ for(const s of ['tg-secret-0001','pw-secret-0002','ak-secret-0003','np-secret-0004'])assert.ok(!plain.includes(s),s);
+});
+test('review of stage 5: a site copy that is not a PIM catalog copy is refused before anything changes',async()=>{
+ const {h,site}=await setup();await h.run('pimRemoteBackup("x",{afterPublish:true})');
+ const fake=zlib.gzipSync(Buffer.from(JSON.stringify({format:'rubizh-pim-backup',cfg:{}})));const sha=crypto.createHash('sha256').update(fake).digest('hex');
+ site.copies.unshift({id:'pim-20261016T130000000000Z-'+sha.slice(0,12),bytes:fake,sha256:sha,label:'fake'});
+ const before=stats(h);h.run('FINAL_UI.remoteBackups=null');await assert.rejects(h.run('finalRemoteRestore("'+site.copies[0].id+'")'),/не копія бази PIM/);assert.deepEqual(stats(h),before);
+});
