@@ -10776,9 +10776,10 @@ buildFeed=function(){
 };
 // Publisher: SITE must advertise the exact contract; each batch is acknowledged per model; only explicit hide_ids hide.
 const FINAL_SYNC_CHUNK=100,FINAL_NET={fetch:(...args)=>classificationNetwork(...args)};
-async function finalSiteRequest(path,opt,key){
+async function finalSiteRequest(path,opt,key,{raw=false}={}){
  const c=siteCfg(),url=c.url.replace(/\/+$/,'')+path;let r,j=null;
  try{r=await FINAL_NET.fetch(url,{...opt,headers:{'Content-Type':'application/json',Authorization:'Bearer '+key,...(opt.headers||{})}});}catch{throw Error('нет связи с сайтом ('+c.url+')');}
+ if(raw)return {r,j};
  try{j=await r.json();}catch{}
  return {r,j};
 }
@@ -10793,6 +10794,51 @@ async function finalSiteFetch(path,opt={}){
  if(!r.ok||!j||j.ok===false)throw Error((j&&j.error)||('сайт ответил '+r.status));
  return j;
 }
+// 5-4 (owner, stage 5): automatic backup outside IndexedDB — the sanitized portable copy (no auth/ rows, no keys) goes
+// to SITE private storage after a COMMITTED publication and after the daily copy, at most once per 6 h otherwise.
+const PIM_REMOTE_BACKUP_GAP=6*3600000;
+function finalHex(buffer){return [...new Uint8Array(buffer)].map(b=>b.toString(16).padStart(2,'0')).join('');}
+async function pimRemoteBackup(label,{afterPublish=false}={}){
+ if(classificationReviewMode())throw Error('REVIEW_ONLY: network disabled');
+ if(!siteReady())throw Error('SYNC_DISABLED: укажите адрес API сайта и ключ PIM.');
+ const last=await Store.get('autobak_meta/remote');
+ if(!afterPublish&&last?.at&&Date.now()-last.at<PIM_REMOTE_BACKUP_GAP)return {skipped:true,last};
+ const d=S.snap?await persistedStateData(label):backupData(label);await attachBackupJournal104(d);d.docFiles=await docFilesB64();d.format='rubizh-pim-backup';d.label=label;d.pimVersion=PIM_VERSION;
+ const text=JSON.stringify(d),c=siteCfg();
+ for(const secret of [c.key,c.keyNext])if(secret&&String(secret).length>=16&&text.includes(secret))throw Error('Копія містить ключ PIM — на сайт не відправлено.');
+ const {blob}=await gzipBlob(text),bytes=await blob.arrayBuffer(),sha256=finalHex(await crypto.subtle.digest('SHA-256',bytes));
+ const j=await finalSiteFetch('/pim/backup',{method:'POST',body:blob,headers:{'Content-Type':'application/gzip','X-Backup-Sha256':sha256,'X-Backup-Label':encodeURIComponent(String(label).slice(0,80))}});
+ if(j.sha256&&j.sha256!==sha256)throw Error('Сайт зберіг копію з іншою контрольною сумою.');
+ const meta={id:j.id,sha256,at:Date.now(),label,size:bytes.byteLength};await Store.set('autobak_meta/remote',meta);return meta;
+}
+async function finalRemoteBackups(){const j=await finalSiteFetch('/pim/backups');FINAL_UI.remoteBackups=Array.isArray(j.backups)?j.backups:[];return FINAL_UI.remoteBackups;}
+async function finalRemoteRestore(id){
+ if(!/^pim-\d{8}T\d{12}Z-[a-f0-9]{12}$/.test(String(id)))throw Error('Невідома копія.');
+ const meta=(FINAL_UI.remoteBackups||await finalRemoteBackups()).find(b=>b.id===id);if(!meta)throw Error('Копію не знайдено на сайті.');
+ const c=siteCfg();let {r}=await finalSiteRequest('/pim/backups/'+encodeURIComponent(id),{},c.key,{raw:true});
+ if(r.status===401&&c.keyNext)({r}=await finalSiteRequest('/pim/backups/'+encodeURIComponent(id),{},c.keyNext,{raw:true}));
+ if(!r.ok)throw Error('Сайт не віддав копію ('+r.status+').');
+ const bytes=await r.arrayBuffer();if(finalHex(await crypto.subtle.digest('SHA-256',bytes))!==meta.sha256)throw Error('Копія пошкоджена: контрольна сума не збігається.');
+ const d=JSON.parse(await gunzipText(new Blob([bytes]),true));
+ if(!d||d.format!=='rubizh-pim-backup')throw Error('Це не копія бази PIM.');
+ // The copy has no credentials: keep the current site connection and the stored auth/ rows; operational gates off.
+ const creds={url:c.url,key:c.key,...(c.keyNext?{keyNext:c.keyNext}:{})};
+ const ok=await applyRestoreData(d);
+ S.cfg.siteApi={...(S.cfg.siteApi||{}),...creds};RubizhReleaseStorage.gates(S.cfg);S.cfgDirty=true;
+ await rememberSiteCredentials105(S.cfg);return ok&&await persist();
+}
+function finalRemoteBackupPanel(){
+ const list=FINAL_UI.remoteBackups;
+ const rows=(list||[]).map(b=>'<tr><td>'+esc(b.at||'')+'</td><td>'+esc(b.label||'')+'</td><td>'+Math.round((b.size||0)/1024)+' КБ</td><td><button class="btn small" data-final="remoteRestore" data-id="'+esc(b.id)+'">Відновити</button></td></tr>').join('');
+ return '<section class="panel"><h2>Копії на сайті</h2><p class="small muted">Автоматично після публікації та щодня (не частіше ніж раз на 6 год). На сайті зберігаються 14 останніх копій без ключів і паролів.</p><button class="btn" data-final="remoteList">'+(list?'Оновити список':'Показати копії')+'</button> <button class="btn" data-final="remoteBackup">Зробити копію зараз</button>'+(list?(rows?'<table class="small"><tbody>'+rows+'</tbody></table>':'<p class="small">Копій ще немає.</p>'):'')+'</section>';
+}
+const finalVBackup=vBackup;vBackup=function(){return finalVBackup(...arguments)+(siteReady()&&!classificationReviewMode()?finalRemoteBackupPanel():'');};
+const finalDailyBackupTick=dailyBackupTick;
+dailyBackupTick=async function(){
+ const before=(await autoBackupIndex()).find(x=>x.daily)?.id;await finalDailyBackupTick(...arguments);
+ const after=(await autoBackupIndex()).find(x=>x.daily)?.id;
+ if(after&&after!==before&&siteReady()&&!classificationReviewMode())try{await pimRemoteBackup('Ежедневная');}catch(e){S.cfg.siteSync={...(S.cfg.siteSync||{}),backupError:String(e?.message||e)};S.cfgDirty=true;}
+};
 async function finalCheckNextKey(){
  const c=siteCfg();if(!c.keyNext)throw Error('Вкажіть новий ключ.');
  const {r,j}=await finalSiteRequest('/pim/status',{},c.keyNext);
@@ -10867,13 +10913,15 @@ async function finalPublish({allowStale=false}={}){
  await Store.set('site/v3/hashes',hashes);await Store.set('site/v3/published',published);
  // OD-4.1: private payouts only after the site COMMITTED the catalog; a failure is reported, the publication stands.
  let costsError='';try{await finalSiteFetch('/pim/costs',{method:'POST',body:JSON.stringify(pimSitePrivateCosts())});}catch(e){costsError=String(e?.message||e);}
- S.cfg.siteV3CatHash=wire.category_catalog_hash;S.cfg.siteSync={...(S.cfg.siteSync||{}),at,mode:'v3',sent:changed.length,hidden:wire.hide_ids.length,errors:errors.slice(0,50),batch_id:batchId,catalog_revision:ack.catalog_revision,lastError:'',costsError};S.cfgDirty=true;
+ // 5-4: a copy of the published state outside IndexedDB; a failure is reported, the publication stands.
+ let backupError='';try{await pimRemoteBackup('Після публікації',{afterPublish:true});}catch(e){backupError=String(e?.message||e);}
+ S.cfg.siteV3CatHash=wire.category_catalog_hash;S.cfg.siteSync={...(S.cfg.siteSync||{}),at,mode:'v3',sent:changed.length,hidden:wire.hide_ids.length,errors:errors.slice(0,50),batch_id:batchId,catalog_revision:ack.catalog_revision,lastError:'',costsError,backupError};S.cfgDirty=true;
  if(!await persist())throw Error('Ответ сайта получен, но локальное сохранение не завершено');
- FINAL_UI.hashes=hashes;return {batch_id:batchId,sent:changed.length,hidden:wire.hide_ids.length,errors:errors.length,...(costsError?{costs_error:costsError}:{})};
+ FINAL_UI.hashes=hashes;return {batch_id:batchId,sent:changed.length,hidden:wire.hide_ids.length,errors:errors.length,...(costsError?{costs_error:costsError}:{}),...(backupError?{backup_error:backupError}:{})};
 }
 sitePublish=async function(mode,{silent=false,allowStale=false}={}){
  if(classificationReviewMode())throw Error('REVIEW_ONLY: publication and /pim/sync disabled');
- try{const r=await finalPublish({allowStale});if(!silent)toast(r.nothing?'На сайте всё актуально':'Сайт обновлён: моделей '+r.sent+', скрыто '+r.hidden+(r.errors?', ошибок '+r.errors:'')+(r.costs_error?'. Себестоимость не передана: '+r.costs_error:''));return r;}
+ try{const r=await finalPublish({allowStale});if(!silent)toast(r.nothing?'На сайте всё актуально':'Сайт обновлён: моделей '+r.sent+', скрыто '+r.hidden+(r.errors?', ошибок '+r.errors:'')+(r.costs_error?'. Себестоимость не передана: '+r.costs_error:'')+(r.backup_error?'. Копия на сайт не отправлена: '+r.backup_error:''));return r;}
  catch(error){S.cfg.siteSync={...(S.cfg.siteSync||{}),lastError:error.message||String(error),lastErrorAt:Date.now()};S.cfgDirty=true;throw error;}
 };
 siteAutoTick=function(){return false;};
@@ -10963,6 +11011,9 @@ document.addEventListener('click',async e=>{
    if(a==='page')FINAL_UI.page=Math.max(0,FINAL_UI.page+Number(b.dataset.d));
    if(a==='rejectedCode'){FINAL_UI.rejectedCode=b.dataset.code;FINAL_UI.page=0;}
    if(a==='saveSite'){const next=($('#siteApiKeyNext')?.value||'').trim(),api={...siteCfg(),url:$('#siteApiUrl').value.trim(),key:$('#siteApiKey').value.trim(),auto:false};if(next)api.keyNext=next;else delete api.keyNext;S.cfg.siteApi=api;S.cfgDirty=true;await rememberSiteCredentials105(S.cfg);await persist();toast('Подключение сохранено');}
+   if(a==='remoteList')await finalRemoteBackups();
+   if(a==='remoteBackup'){const m=await pimRemoteBackup('Вручну',{afterPublish:true});await finalRemoteBackups();toast('Копію збережено на сайті: '+m.id);}
+   if(a==='remoteRestore'&&confirm('Замінити поточну базу копією з сайту? Перед заміною PIM зробить копію поточного стану. Синхронізація та автоцени будуть вимкнені.')){if(await finalRemoteRestore(b.dataset.id))toast('Базу відновлено з копії на сайті.');}
    if(a==='checkNextKey'){await finalCheckNextKey();toast('Сайт приймає новий ключ. Тепер натисніть «Зробити основним».');}
    if(a==='promoteKey'&&confirm('Зробити новий ключ основним? Після цього на сайті перенесіть його в pim_key і очистіть pim_key_next.')){await finalPromoteNextKey();toast('Новий ключ став основним.');}
    if(a==='publish')await sitePublish('delta');

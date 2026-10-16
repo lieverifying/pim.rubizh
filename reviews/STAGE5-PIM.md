@@ -19,6 +19,33 @@ data, no PIM sync, no AUTOPRICES, no production. All tests use synthetic catalog
 - An offer without any observation time (only `imported_at`) has no age and is not downgraded (unchanged behaviour; SITE
   keeps its own checkout age check).
 
+### PIMC-P3 / PIMC-P4
+- P3 applied as proposed (broken/invalid photos removed from colour galleries before the decision and the export).
+- P4 narrower than the proposal: a COLOR size catalog drops only sizes that colour sells as a real SKU; a MODEL catalog drops
+  a size only when **every** colour sells it. The proposal kept every MODEL size as an option, which repeated real SKUs as
+  request options and broke `clean-import-hardening` («real SKUs … are not repeated as options»).
+
+### OD-4.1 private payouts (5-2)
+- `pimSitePrivateCosts()` → `rubizh-pim-private-costs` v1 (schema = SITE `contracts/pim-private-costs/1/schema.json`),
+  sent to `POST /api/pim/costs` only after a COMMITTED publication; failure → `siteSync.costsError`, toast; publication stands.
+- The exact fixture `contracts/fixtures/pim-site-private-costs-v1.exact.json` comes from the exporter on the same synthetic
+  catalog as the wire fixture (`tools/export-private-costs-fixture.cjs`). SITE's hand-written `fixture.json` differs in
+  values — SITE should adopt this file as its fixture.
+
+### Automatic backup outside IndexedDB (5-4)
+- Copy = `backupData()` (config sanitized: no `key`/`keyNext`/passwords/tokens; no `auth/` rows) + journal + doc files,
+  gzip, `X-Backup-Sha256`, `X-Backup-Label`. Refused client-side if the text contains the current or next key.
+- Triggers: after every COMMITTED publication; after a new daily copy («Ежедневная»), at most one upload per 6 h
+  (`autobak_meta/remote`). Failures → `siteSync.backupError`, never block.
+- «Копії на сайті» on the backup screen: list, «Зробити копію зараз», «Відновити» → sha256 check → `applyRestoreData`
+  (local copy first) → site credentials kept (and `auth/site_credentials`), `RubizhReleaseStorage.gates` (site auto,
+  sync, autoprices, supplier sources off).
+
+### pim_key rotation (5-4)
+- «Новий ключ» = `siteApi.keyNext`, kept in `auth/site_credentials`, never in portable copies. A 401 with the main key is
+  retried once with the next key → «Зробіть новий ключ основним». «Перевірити» needs `/pim/status` `key_slot:'next'`;
+  «Зробити основним» moves it. Procedure on SITE: `pim_key_next` → PIM check → promote → SITE `pim_key` = new, clear next.
+
 ## Changed pre-existing tests
 
 | Test | Before → after | Order item | Why |
