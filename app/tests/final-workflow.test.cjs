@@ -154,3 +154,21 @@ test('wire carries size metadata as text: a classifier-normalised numeric size (
  assert.equal(v.size_normalized,'41');for(const f of ['size_raw','size_display','size_normalized','size_system','size_type','size_alpha','size_fit','size_height'])assert.ok(v[f]==null||typeof v[f]==='string',f);
  assert.equal(h.run('S.products.get("p-a").variants[0].size_normalized'),41,'stored PIM data unchanged');
 });
+
+test('broken color photo blocks readiness and is absent from every exported gallery',()=>{
+ const h=setup();h.run('S.products.get("p-a").photoMeta={"https://rubizh.shop/media/black.webp":{broken:true}};bumpData()');
+ assert.equal(h.run('finalDecision(S.products.get("p-a")).state'),'MODERATION');
+ const m=JSON.parse(JSON.stringify(h.run('finalWireProduct(S.products.get("p-a"))'))),black=m.colors.find(c=>c.color==='Чорний');
+ assert.deepEqual(black.photos,[]);assert.equal(black.photo_assignment,'unknown');
+ assert.deepEqual(m.variants.find(v=>v.sku==='RUB-00002').photos,[]);
+ assert.ok(!m.photos.includes('https://rubizh.shop/media/black.webp'));
+});
+
+test('request assortment keeps missing sizes across colors without inventing real SKUs',()=>{
+ const h=setup();h.run('const p=S.products.get("p-a");Object.assign(p.variants[0],{size_status:"EXACT_SIZE",size_normalized:"M"});Object.assign(p.variants[1],{size_status:"EXACT_SIZE",size_normalized:"L"});p.size_catalogs=[{catalog_id:"assortment",scope:"MODEL",color_id:null,size_system:"clothing_alpha",allowed_sizes:["M","L","XL"]}];bumpData()');
+ const options=()=>JSON.parse(JSON.stringify(h.run('classificationOptions(S.products.get("p-a"))')));
+ assert.deepEqual(options().map(o=>o.size),['M','L','XL']);
+ h.run('S.products.get("p-a").size_catalogs[0].scope="COLOR";S.products.get("p-a").size_catalogs[0].color_id=mcColors(S.products.get("p-a"))[0].id;bumpData()');
+ const scoped=options();assert.deepEqual(scoped.map(o=>o.size),['L','XL']);
+ assert.ok(scoped.every(o=>o.variant_sku===null&&o.stock_quantity===null&&o.payment_allowed===false&&o.requires_order_confirmation===true));
+});

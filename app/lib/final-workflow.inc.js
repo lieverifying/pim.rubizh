@@ -29,7 +29,9 @@ const FINAL_MODERATION_TEXT={
  price_unit:['Цена за единицу площади, не за товар','Поставщик продаёт индивидуальный размер по цене за 1 кв.м: такую цену нельзя оплачивать как цену товара. Решите, как продавать (заявка с расчётом) или снимите с сайта.'],
  variant_cell:['Варианты не различаются на сайте','У нескольких SKU одинаковые цвет и размер: укажите размер/цвет каждого SKU или разделите модель.']
 };
-function finalUsablePhotos(p){return simplePhotos(p).filter(url=>p.photoMeta?.[url]?.broken!==true&&p.photoMeta?.[url]?.invalid!==true);}
+function finalPhotoUsable(p,url){return p.photoMeta?.[url]?.broken!==true&&p.photoMeta?.[url]?.invalid!==true;}
+function finalUsablePhotos(p){return simplePhotos(p).filter(url=>finalPhotoUsable(p,url));}
+function finalUsableColors(p,colors){return colors.map(c=>{const photos=c.photos.filter(url=>finalPhotoUsable(p,url));return {...c,photos,photo_assignment:photos.length?c.photo_assignment:'unknown'};});}
 // Supplier titles join descriptor segments with «|» («Тактические шорты BR Stinger | Стрейч, серые | Лето, ТрО, …»). When
 // every segment after the first carries no model identity (no digit at all, no Latin word once colour/size words are gone),
 // the public title is cut back to the first segment — only if the title verifiably starts
@@ -131,7 +133,7 @@ const finalDecision=memoProd('final-decision',function(p){
  if(!p.canonical_category_id||openCategory)add(moderate,'category',FINAL_MODERATION_TEXT.category[1],[p.category_review_status||'NEEDS_REVIEW',p.suggested_category_id?'Предложено: '+canonicalPath(p.suggested_category_id):''].filter(Boolean));
  if(variants.length>modelLimit(p)||finalModelReview().has(p.id))add(moderate,'grouping',FINAL_MODERATION_TEXT.grouping[1],[variants.length+' SKU']);
  const unknownColors=uniq(variants.flatMap(v=>simplePalette(v).unknown));if(unknownColors.length)add(moderate,'color',FINAL_MODERATION_TEXT.color[1],unknownColors.slice(0,5));
- if(classificationEnabled()||mcEnabled()){const colors=mcColors(p);if(colors.length>1&&colors.some(c=>!c.photos.length))add(moderate,'photo_ownership',FINAL_MODERATION_TEXT.photo_ownership[1],colors.filter(c=>!c.photos.length).map(c=>[c.color,c.camouflage].filter(Boolean).join(' / ')||c.id));}
+ if(classificationEnabled()||mcEnabled()){const colors=finalUsableColors(p,mcColors(p));if(colors.length>1&&colors.some(c=>!c.photos.length))add(moderate,'photo_ownership',FINAL_MODERATION_TEXT.photo_ownership[1],colors.filter(c=>!c.photos.length).map(c=>[c.color,c.camouflage].filter(Boolean).join(' / ')||c.id));}
  const unitPriced=variants.filter(finalUnitPriced);if(unitPriced.length)add(moderate,'price_unit',FINAL_MODERATION_TEXT.price_unit[1],unitPriced.slice(0,5).map(v=>v.sku));
  const sameTitle=(finalTitleOwners().get((p.canonical_category_id||'')+'\u0000'+norm(finalTitle(p)))||[]).filter(id=>id!==p.id);if(sameTitle.length)add(moderate,'grouping',FINAL_MODERATION_TEXT.grouping[1],['Та сама назва: '+sameTitle.slice(0,3).join(', ')]);
  const publicCells=finalPublicCells(p),cells=new Map(),same=[];for(const v of variants){const k=publicCells.get(v.sku);if(cells.has(k))same.push(cells.get(k),v.sku);else cells.set(k,v.sku);}
@@ -163,7 +165,7 @@ function finalSizeRank(v){
 }
 function finalWireProduct(p){
  const out=simpleProductPayload(simpleAssess(p)),photos=finalUsablePhotos(p);
- out.colors=(out.colors||[]).map(c=>Object.fromEntries(FINAL_COLOR_FIELDS.filter(k=>Object.hasOwn(c,k)).map(k=>[k,structuredClone(c[k])])));
+ out.colors=finalUsableColors(p,out.colors||[]).map(c=>Object.fromEntries(FINAL_COLOR_FIELDS.filter(k=>Object.hasOwn(c,k)).map(k=>[k,structuredClone(c[k])])));
  out.photos=photos;out.unassigned_photos=photos.filter(url=>!out.colors.some(c=>c.photos.includes(url)));
  // U+02BC is missing from the storefront fonts (the word breaks into «Ім ʼ я»): publish the typographic apostrophe ’.
  const typo=t=>String(t??'').replace(/(?<=\p{L})\u02bc(?=\p{L})/gu,'\u2019');

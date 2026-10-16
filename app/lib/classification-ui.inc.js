@@ -165,7 +165,13 @@ function classificationApplyProduct(p){
  p.classification_fingerprint=classificationHash([CLASSIFICATION_VERSION,classificationSources(p),d.classification,p.size_catalogs,p.classification_exceptions]);p.classification_input_fingerprint=classificationInputFingerprint(p);markProduct(p);
 }
 function classificationOptions(p){
- return (p.size_catalogs||[]).flatMap(c=>c.allowed_sizes.filter(size=>!p.variants.some(v=>v.size_status==='EXACT_SIZE'&&String(v.size_normalized??v.size)===size)).map(size=>({option_id:c.catalog_id+':'+size,catalog_id:c.catalog_id,scope:c.scope,color_id:c.color_id,size,size_system:c.size_system,variant_sku:null,supplier_sku:null,stock:null,stock_quantity:null,stock_status:'UNKNOWN',availability_status:'UNKNOWN',availability_source:null,availability_confirmation:'UNKNOWN',availability:'SIZE_CONFIRMATION_REQUIRED',...classificationPermissions('SIZE_CONFIRMATION_REQUIRED'),selectable_for_request:true})));
+ // PIMC-P4: a request-only size is scoped to its colour. A COLOR catalog drops only sizes that colour sells as a real SKU;
+ // a MODEL catalog drops a size only when every colour of the model sells it as a real SKU (a real size of one colour
+ // never removes the request option of another colour, and a real SKU is never repeated as an option).
+ const colorBySku=new Map(mcColors(p).flatMap(c=>c.variant_skus.map(sku=>[sku,c.id]))),colors=[...new Set(colorBySku.values())];
+ const real=(color,size)=>p.variants.some(v=>(color===undefined||colorBySku.get(v.sku)===color)&&v.size_status==='EXACT_SIZE'&&String(v.size_normalized??v.size)===size);
+ const sold=(c,size)=>c.scope==='MODEL'?(colors.length?colors.every(color=>real(color,size)):real(undefined,size)):real(c.color_id,size);
+ return (p.size_catalogs||[]).flatMap(c=>c.allowed_sizes.filter(size=>!sold(c,size)).map(size=>({option_id:c.catalog_id+':'+size,catalog_id:c.catalog_id,scope:c.scope,color_id:c.color_id,size,size_system:c.size_system,variant_sku:null,supplier_sku:null,stock:null,stock_quantity:null,stock_status:'UNKNOWN',availability_status:'UNKNOWN',availability_source:null,availability_confirmation:'UNKNOWN',availability:'SIZE_CONFIRMATION_REQUIRED',...classificationPermissions('SIZE_CONFIRMATION_REQUIRED'),selectable_for_request:true})));
 }
 const STOCK_WARNING_DEFAULT_HOURS=36;
 function classificationFreshnessHours(sid){
