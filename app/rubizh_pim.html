@@ -2204,11 +2204,14 @@ function recalcNextSkuFromCatalog(){
   for(const p of S.products.values()) for(const v of (p.variants||[])){ const m=String(v.sku||'').match(re); if(m) mx=Math.max(mx,+m[1]||0); }
   S.cfg.nextSku=mx+1;
 }
+// Stage 5.5 (owner D-69): «Автоматично застосовувати чисті описи» is on for a NEW installation only (no saved settings);
+// an existing installation keeps its choice — the owner switches it on by the instruction.
+function cfgForInstall(stored){const c=Object.assign(structuredClone(DEFAULT_CFG),stored||{});if(!stored)c.contentAutoApply=true;return c;}
 async function load(){
   await Store.init();
   const cfg = await Store.get("meta/config");
   S.storageRevision=+(await Store.get("sync/local_revision"))||0;
-  S.cfg = Object.assign(structuredClone(DEFAULT_CFG), cfg || {});
+  S.cfg = cfgForInstall(cfg);
   await initStoragePersistence();
   S.cfg.minMargin = Math.max(20, +S.cfg.minMargin || 20);
   // v7.4.0: final taxonomy + source-category mappings. Preserve every user/manual mapping.
@@ -9041,7 +9044,8 @@ function ceSupplementalFacts(p){
  }
  const facts=[],conflicts=[];
  for(const group of groups.values()){
-  const values=uniq(group.values);if(values.length>1){conflicts.push({key:group.key,label:group.label,values:values.map(value=>({value,source:uniq(group.sources).join(' · ')}))});continue;}
+  // Stage 5.5 (D-70): one value in different formats is one value.
+ const values=[...new Map(group.values.map(v=>[ceFormatKey(v),v])).values()];if(values.length>1){conflicts.push({key:group.key,label:group.label,values:values.map(value=>({value,source:uniq(group.sources).join(' · ')}))});continue;}
   facts.push({key:group.key,label:group.label,value:values[0],sources:uniq(group.sources),source:group.sources[0]});
  }
  return {facts,conflicts,languageWarnings,excluded,removed,coverage:languageWarnings.length||conflicts.length?0:1};
@@ -9084,6 +9088,74 @@ ceGenerate=function(p,style=0){
 };
 const ceMetrics108=ceMetricsHtml;
 ceMetricsHtml=function(d){return ceMetrics108(d)+(d.supplementalFacts?`<p class="small">Додатково збережено характеристик поза шаблонами: ${d.supplementalFacts}.</p>`:'')+(d.commercialInTechnical?.length?`<p class="small" style="color:var(--warn)">Комерційний текст у технічному реченні · ${d.commercialInTechnical.length}: опис не застосовується автоматично.</p>`:'')+(d.removedFragments?.length?`<details><summary class="small">Вилучено з опису постачальника · ${d.removedFragments.length}</summary><ul class="small">${d.removedFragments.map(r=>'<li><b>'+esc(CE_GROUP_LABEL[r.group]||r.group)+'</b> — '+esc(r.text)+' <span class="muted">('+esc(r.reason)+')</span></li>').join('')}</ul></details>`:'');};
+
+// Stage 5.5 (owner D-70): one value written in different formats is one value — case, spaces, см/cm, мм/mm, кг/kg, decimal
+// «,»/«.», «х»/«x»/«×»/«*», the Russian/Ukrainian variant of one word (autoUkText). A different value stays a contradiction.
+function ceFormatKey(v){
+ return autoUkText(String(v??'')).toLowerCase().replace(/(\d),(\d)/g,'$1.$2').replace(/(\d)\s*[x×*х]\s*(?=\d)/giu,'$1х')
+  .replace(/(?<![\p{L}])(?:cm)(?![\p{L}])/giu,'см').replace(/(?<![\p{L}])(?:mm)(?![\p{L}])/giu,'мм').replace(/(?<![\p{L}])(?:kg)(?![\p{L}])/giu,'кг').replace(/(?<![\p{L}])(?:g|гр)(?![\p{L}])/giu,'г')
+  .replace(/[\s.:;,]+$/u,'').replace(/\s+/g,'');
+}
+const ceCanonical55=ceCanonical;ceCanonical=function(key,v){return ceFormatKey(ceCanonical55(key,v));};
+// Stage 5.5 (owner D-69): a draft is applied automatically only when all five hold: no remarks after cleaning (ceContentBlock),
+// completeness ≥ 60, similarity to another product < 85 % (ceChoose), the description is not manual, the final text has no
+// G1–G5 signal. ceContentBlock and both thresholds are unchanged.
+const CE_NEED_LABELS={conflict:'Суперечність даних',language:'Неперекладене речення',commercial:'Комерційний текст у технічному реченні',quality:'Мало даних (повнота < 60)',similar:'Схожий на інший товар'};
+function ceAutoApplyReasons(p,d=p?.contentDraft){
+ if(!p||!d)return ['draft'];
+ const r=[];if(p.fieldMeta?.desc?.source==='manual')r.push('manual');if(ceContentBlock(d))r.push('block');
+ if(!(Number(d.quality)>=60))r.push('quality');if(Number(d.similarity?.pct)>=85)r.push('similar');
+ if(!d.html||ceCommercialSignals(plainSupplierText(d.html),p).length)r.push('commercial');
+ return r;
+}
+function ceAutoApply(p,index){
+ if(p.fieldMeta?.desc?.source==='manual')return {ok:false,reasons:['manual']};
+ p.contentDraft=ceChoose(p,index);const reasons=ceAutoApplyReasons(p);if(reasons.length)return {ok:false,reasons};
+ const r=ceApply(p);return r.ok?{ok:true}:{ok:false,reasons:['apply'],why:r.why};
+}
+// D-70: what is not applied stays a draft (the site shows the basic description from facts); the queue shows why.
+function ceNeedReason(p,d=p?.contentDraft){
+ if(!p||!d||p.fieldMeta?.desc?.source==='manual')return null;
+ if(d.conflicts?.length)return 'conflict';if(d.languageWarnings?.length||!d.html)return 'language';
+ if(d.commercialInTechnical?.length)return 'commercial';if(!(Number(d.quality)>=60))return 'quality';
+ if(Number(d.similarity?.pct)>=85)return 'similar';if(ceContentBlock(d))return 'conflict';
+ return null;
+}
+const ceNeedCounts=memoByData(function(){const c=Object.fromEntries(Object.keys(CE_NEED_LABELS).map(k=>[k,0]));for(const p of S.products.values()){if(p.archived||ceAccepted(p))continue;const k=ceNeedReason(p);if(k)c[k]++;}return c;});
+const ceList55=ceList;ceList=function(){
+ const f=String(CE_UI.filter||'');if(!f.startsWith('need:'))return ceList55();
+ const need=f.slice(5);CE_UI.filter='all';try{return ceList55().filter(p=>!ceAccepted(p)&&ceNeedReason(p)===need);}finally{CE_UI.filter=f;}
+};
+const vContentEngine55=vContentEngine;vContentEngine=function(){
+ const counts=ceNeedCounts(),last=S.cfg.ceLastClean?.ids?.length||0;
+ return `<div class="panel" data-ce-need><h2>Потребують рішення</h2><p class="small muted">Описи, які не пройшли автоматичну перевірку, лишаються чернетками; на сайті — базовий опис із характеристик.</p><div class="row" role="group" aria-label="Причини">${Object.entries(CE_NEED_LABELS).map(([k,l])=>`<button class="btn small" data-act="ceNeedFilter" data-need="${k}" aria-pressed="${CE_UI.filter==='need:'+k}">${esc(l)} · ${counts[k]}</button>`).join('')}${String(CE_UI.filter).startsWith('need:')?'<button class="btn small" data-act="ceNeedFilter" data-need="">Усі</button>':''}</div>
+ <div class="row" style="margin-top:10px"><button class="btn primary" data-act="ceApplyClean" ${CE_UI.busy?'disabled':''}>Застосувати всі чисті описи</button>${last?`<button class="btn" data-act="ceUndoClean" ${CE_UI.busy?'disabled':''}>Скасувати останнє застосування (${last})</button>`:''}</div></div>`+vContentEngine55();
+};
+async function ceApplyClean(){
+ if(CE_UI.busy||S.snap){toast('Завершіть поточну операцію');return;}
+ CE_UI.busy=true;const index=ceBuildIndex(),ready=[];
+ try{
+  let n=0;for(const p of S.products.values()){if(p.archived||p.fieldMeta?.desc?.source==='manual'||(ceAccepted(p)&&p.contentEngine?.inputFingerprint===ceFingerprint(p)))continue;
+   p.contentDraft=ceChoose(p,index);markProduct(p,true);if(!ceAutoApplyReasons(p).length)ready.push(p);if(++n%25===0)await new Promise(r=>setTimeout(r,0));}
+ }finally{CE_UI.busy=false;}
+ if(!ready.length){toast('Чистих описів для застосування немає');render();return;}
+ if(!confirm(`Застосувати ${ready.length} чистих описів? Ручні описи не зміняться. Кожен поточний опис збережено — дію можна скасувати.`)){render();return;}
+ try{const backup=await createAutoBackup('Перед застосуванням чистих описів',{force:true});if(!backup)await Store.set('contentengine/before_apply',backupData('Перед застосуванням чистих описів'));}catch(e){toast('Резервну копію не створено. Описи не змінено.');return;}
+ const ids=[];for(const p of ready){if(ceApply(p).ok){ids.push(p.id);index.add(p,p.desc);}}
+ S.cfg.ceLastClean={at:Date.now(),ids};S.cfgDirty=true;bumpData();await persist();toast('Застосовано чистих описів: '+ids.length);render();
+}
+async function ceUndoClean(){
+ const ids=S.cfg.ceLastClean?.ids||[];if(!ids.length)return;
+ if(!confirm(`Повернути попередні описи для ${ids.length} товарів?`))return;
+ let n=0;for(const id of ids){const p=S.products.get(id);if(p&&ceUndo(p).ok)n++;}
+ S.cfg.ceLastClean=null;S.cfgDirty=true;bumpData();await persist();toast('Повернуто описів: '+n);render();
+}
+const ceAction55=ceAction;ceAction=async function(a,t){
+ if(a==='ceNeedFilter'){CE_UI.filter=t.dataset.need?'need:'+t.dataset.need:'all';CE_UI.page=0;render();return;}
+ if(a==='ceApplyClean'){await ceApplyClean();return;}
+ if(a==='ceUndoClean'){await ceUndoClean();return;}
+ return ceAction55(a,t);
+};
 
 // Free supplier localization (10.6.0). No external requests or model downloads.
 const CE_EXTRA_WORDS108={
@@ -9603,7 +9675,7 @@ async function workflowContentAfterImport(results,apply=false){if(typeof classif
   if(p.archived||p.fieldMeta?.desc?.source==='manual'||!p.variants?.some(v=>Object.entries(v.offers||{}).some(([sid,o])=>timestamps.get(sid)===o.at)))continue;
   if(!S.cfg.contentEngineAutoDraft&&!apply)continue;touchP(p.id);
   if(refreshGeneratedDescription(p))prepared++;
-  if(apply&&(!ceAccepted(p)||p.contentEngine?.inputFingerprint!==ceFingerprint(p))){if(!index)index=ceBuildIndex();p.contentDraft=ceChoose(p,index);if(ceApply(p).ok){applied++;index.add(p,p.desc);}else review++;}
+  if(apply&&(!ceAccepted(p)||p.contentEngine?.inputFingerprint!==ceFingerprint(p))){if(!index)index=ceBuildIndex();if(ceAutoApply(p,index).ok){applied++;index.add(p,p.desc);}else review++;}
   if((prepared+applied+review)%20===0&&prepared+applied+review)await workflowYield();
  }
  return {prepared,applied,review};
@@ -9611,7 +9683,7 @@ async function workflowContentAfterImport(results,apply=false){if(typeof classif
 function workflowSourceURL(raw){const u=new URL(String(raw||'').trim());if(u.protocol!=='https:'||u.username||u.password)throw Error('Нужна прямая HTTPS-ссылка на прайс без логина и пароля в адресе.');return u.href;}
 function workflowSourcePanel(s){const source=s.source||{};return `<details class="panel workflow-source" data-source-panel="${esc(s.id)}"><summary><b>Автоматическое обновление прайса</b></summary><p class="small muted">Проверка по расписанию работает, пока PIM открыта. Для работы при закрытом браузере нужна задача на хостинге и подключение к серверной базе.</p><label class="f">Прямая ссылка на XLSX, CSV или XML<input type="url" data-source-url="${esc(s.id)}" value="${esc(source.url||'')}" placeholder="https://supplier.example/prices.xlsx"></label><div class="row"><label class="f">Интервал, часов<input type="number" min="1" max="168" step="1" data-source-hours="${esc(s.id)}" value="${+source.hours||24}"></label><label class="chk"><input type="checkbox" data-source-enabled="${esc(s.id)}" ${source.enabled?'checked':''}> Проверять автоматически</label><label class="chk"><input type="checkbox" data-source-apply="${esc(s.id)}" ${source.autoApply?'checked':''}> Применять после проверки профиля</label><label class="chk"><input type="checkbox" data-source-ignore-header="${esc(s.id)}" ${s.source_time_ignore_header===true?'checked':''}> Ігнорувати дату всередині файлу (рішення власника): час даних — дата скачування файлу</label></div><p class="small">${source.profile?'Профиль колонок подтверждён.':'Первое скачивание нужно проверить и применить в разделе импорта.'} Отсутствующие в файле позиции автоматически не обнуляются; устаревшее наличие учитывается отдельно.</p><div class="row"><button class="btn" data-act="wfSaveSource" data-sid="${esc(s.id)}">Сохранить источник</button><button class="btn primary" data-act="wfFetchSource" data-sid="${esc(s.id)}" ${source.url?'':'disabled'}>Скачать и проверить</button></div>${source.lastChecked?`<p class="small muted">Проверяли: ${esc(fmtDate(source.lastChecked))}</p>`:''}${source.lastApplied?`<p class="small">Обновление применено: ${esc(fmtDate(source.lastApplied))}</p>`:''}${source.lastError?`<p class="finance-bad">${esc(source.lastError)}</p>`:''}</details>`;}
 const workflowSupplierView=vSupplier;vSupplier=function(id){const s=S.cfg.suppliers.find(x=>x.id===id);return workflowSupplierView(id)+(s?workflowSourcePanel(s):'');};
-const workflowSettingsView=vSettings;vSettings=function(){return workflowSettingsView()+`<div class="panel"><h2>Автоматизация описаний</h2><p>После импорта PIM подготавливает описания из полного текста поставщика. Проверенные черновики можно применять автоматически; ручные описания защищены.</p><label class="chk"><input id="workflow-auto-draft" type="checkbox" ${S.cfg.contentEngineAutoDraft?'checked':''}> Обновлять черновики после изменения данных</label><label class="chk"><input id="workflow-auto-content" type="checkbox" ${S.cfg.contentAutoApply?'checked':''}> Применять черновики с полным сохранением фактов и проверенным переводом после импорта</label><p class="small muted">Противоречия и непереведённые фразы остаются в разделе «Проблемы». Автоматическое применение не публикует изменения на сайт.</p><button class="btn" data-act="wfSaveAutomation">Сохранить автоматизацию</button></div>`;};
+const workflowSettingsView=vSettings;vSettings=function(){return workflowSettingsView()+`<div class="panel"><h2>Автоматизация описаний</h2><p>После импорта PIM подготавливает описания из полного текста поставщика. Проверенные черновики можно применять автоматически; ручные описания защищены.</p><label class="chk"><input id="workflow-auto-draft" type="checkbox" ${S.cfg.contentEngineAutoDraft?'checked':''}> Обновлять черновики после изменения данных</label><label class="chk"><input id="workflow-auto-content" type="checkbox" aria-describedby="workflow-auto-content-help" ${S.cfg.contentAutoApply?'checked':''}> Автоматично застосовувати чисті описи</label><div class="small muted" id="workflow-auto-content-help">Опис застосовується після імпорту, лише якщо: 1) немає зауважень після чистки (суперечностей, неперекладених речень, комерційного тексту в технічних реченнях); 2) повнота не менше 60; 3) схожість на інший товар менше 85 %; 4) опис не ручний; 5) у готовому тексті немає ціни, наявності, умов, чужого магазину, контактів чи назви постачальника замість бренду (ціни, наявність, умови — перевіряються повторно). Решта — у «Потребують рішення». Застосування не публікує зміни на сайт.</div><button class="btn" data-act="wfSaveAutomation">Сохранить автоматизацию</button></div>`;};
 vToday=function(){const problems=workflowProblems(),groups=groupsOfQueue().length,count=problems.length+groups,active=[...S.products.values()].filter(p=>!p.archived),variants=active.reduce((n,p)=>n+p.variants.length,0),sources=S.cfg.suppliers.filter(s=>!s.disabled&&s.source?.url);
  return `<h1>Главная</h1><p class="lead">Обновляйте прайсы, разбирайте реальные проблемы и публикуйте готовые товары.</p><div class="row workflow-home-actions"><button class="btn primary" ${sources.length?'data-act="wfRefreshSources"':'data-view="import"'}>${sources.length?'Обновить прайсы по ссылкам':'Загрузить прайс'}</button><button class="btn" data-view="queue">Проблемы · ${count}</button><button class="btn" data-view="export">Публикация на сайт</button></div><div class="stats"><div class="stat"><b>${active.length}</b><span>активных товаров</span></div><div class="stat"><b>${variants}</b><span>вариантов</span></div><div class="stat"><b>${problems.filter(x=>x.severity==='error').length}</b><span>ошибок</span></div><div class="stat"><b>${sources.length}</b><span>источников прайсов</span></div></div>${problems.slice(0,5).map(workflowProblemCard).join('')||`<div class="panel">Текущие проверки не нашли проблем.${groups?' Есть новые товары, которые требуют решения по импорту.':''}</div>`}${problems.length>5?`<button class="btn" data-view="queue">Все ${problems.length} проблем</button>`:''}<div class="panel"><h2>Поставщики</h2>${S.cfg.suppliers.map(s=>`<div class="row workflow-supplier-row"><div><button class="link" data-view="sup:${esc(s.id)}">${esc(s.name)}</button><div class="small muted">${s.lastImport?'Прайс: '+esc(ago(s.lastImport)):'Прайс ещё не применяли'} · ${s.disabled?'отключён':s.source?.enabled?'автопроверка при открытой PIM':'ручное обновление'}</div></div><span class="spacer"></span><button class="btn small" data-act="supImport" data-sid="${esc(s.id)}">Загрузить файл</button></div>`).join('')||'<p>Добавьте поставщика и загрузите его прайс.</p>'}</div>`;
 };

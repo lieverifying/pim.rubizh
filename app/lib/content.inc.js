@@ -145,7 +145,8 @@ function ceSupplementalFacts(p){
  }
  const facts=[],conflicts=[];
  for(const group of groups.values()){
-  const values=uniq(group.values);if(values.length>1){conflicts.push({key:group.key,label:group.label,values:values.map(value=>({value,source:uniq(group.sources).join(' · ')}))});continue;}
+  // Stage 5.5 (D-70): one value in different formats is one value.
+ const values=[...new Map(group.values.map(v=>[ceFormatKey(v),v])).values()];if(values.length>1){conflicts.push({key:group.key,label:group.label,values:values.map(value=>({value,source:uniq(group.sources).join(' · ')}))});continue;}
   facts.push({key:group.key,label:group.label,value:values[0],sources:uniq(group.sources),source:group.sources[0]});
  }
  return {facts,conflicts,languageWarnings,excluded,removed,coverage:languageWarnings.length||conflicts.length?0:1};
@@ -188,3 +189,71 @@ ceGenerate=function(p,style=0){
 };
 const ceMetrics108=ceMetricsHtml;
 ceMetricsHtml=function(d){return ceMetrics108(d)+(d.supplementalFacts?`<p class="small">Додатково збережено характеристик поза шаблонами: ${d.supplementalFacts}.</p>`:'')+(d.commercialInTechnical?.length?`<p class="small" style="color:var(--warn)">Комерційний текст у технічному реченні · ${d.commercialInTechnical.length}: опис не застосовується автоматично.</p>`:'')+(d.removedFragments?.length?`<details><summary class="small">Вилучено з опису постачальника · ${d.removedFragments.length}</summary><ul class="small">${d.removedFragments.map(r=>'<li><b>'+esc(CE_GROUP_LABEL[r.group]||r.group)+'</b> — '+esc(r.text)+' <span class="muted">('+esc(r.reason)+')</span></li>').join('')}</ul></details>`:'');};
+
+// Stage 5.5 (owner D-70): one value written in different formats is one value — case, spaces, см/cm, мм/mm, кг/kg, decimal
+// «,»/«.», «х»/«x»/«×»/«*», the Russian/Ukrainian variant of one word (autoUkText). A different value stays a contradiction.
+function ceFormatKey(v){
+ return autoUkText(String(v??'')).toLowerCase().replace(/(\d),(\d)/g,'$1.$2').replace(/(\d)\s*[x×*х]\s*(?=\d)/giu,'$1х')
+  .replace(/(?<![\p{L}])(?:cm)(?![\p{L}])/giu,'см').replace(/(?<![\p{L}])(?:mm)(?![\p{L}])/giu,'мм').replace(/(?<![\p{L}])(?:kg)(?![\p{L}])/giu,'кг').replace(/(?<![\p{L}])(?:g|гр)(?![\p{L}])/giu,'г')
+  .replace(/[\s.:;,]+$/u,'').replace(/\s+/g,'');
+}
+const ceCanonical55=ceCanonical;ceCanonical=function(key,v){return ceFormatKey(ceCanonical55(key,v));};
+// Stage 5.5 (owner D-69): a draft is applied automatically only when all five hold: no remarks after cleaning (ceContentBlock),
+// completeness ≥ 60, similarity to another product < 85 % (ceChoose), the description is not manual, the final text has no
+// G1–G5 signal. ceContentBlock and both thresholds are unchanged.
+const CE_NEED_LABELS={conflict:'Суперечність даних',language:'Неперекладене речення',commercial:'Комерційний текст у технічному реченні',quality:'Мало даних (повнота < 60)',similar:'Схожий на інший товар'};
+function ceAutoApplyReasons(p,d=p?.contentDraft){
+ if(!p||!d)return ['draft'];
+ const r=[];if(p.fieldMeta?.desc?.source==='manual')r.push('manual');if(ceContentBlock(d))r.push('block');
+ if(!(Number(d.quality)>=60))r.push('quality');if(Number(d.similarity?.pct)>=85)r.push('similar');
+ if(!d.html||ceCommercialSignals(plainSupplierText(d.html),p).length)r.push('commercial');
+ return r;
+}
+function ceAutoApply(p,index){
+ if(p.fieldMeta?.desc?.source==='manual')return {ok:false,reasons:['manual']};
+ p.contentDraft=ceChoose(p,index);const reasons=ceAutoApplyReasons(p);if(reasons.length)return {ok:false,reasons};
+ const r=ceApply(p);return r.ok?{ok:true}:{ok:false,reasons:['apply'],why:r.why};
+}
+// D-70: what is not applied stays a draft (the site shows the basic description from facts); the queue shows why.
+function ceNeedReason(p,d=p?.contentDraft){
+ if(!p||!d||p.fieldMeta?.desc?.source==='manual')return null;
+ if(d.conflicts?.length)return 'conflict';if(d.languageWarnings?.length||!d.html)return 'language';
+ if(d.commercialInTechnical?.length)return 'commercial';if(!(Number(d.quality)>=60))return 'quality';
+ if(Number(d.similarity?.pct)>=85)return 'similar';if(ceContentBlock(d))return 'conflict';
+ return null;
+}
+const ceNeedCounts=memoByData(function(){const c=Object.fromEntries(Object.keys(CE_NEED_LABELS).map(k=>[k,0]));for(const p of S.products.values()){if(p.archived||ceAccepted(p))continue;const k=ceNeedReason(p);if(k)c[k]++;}return c;});
+const ceList55=ceList;ceList=function(){
+ const f=String(CE_UI.filter||'');if(!f.startsWith('need:'))return ceList55();
+ const need=f.slice(5);CE_UI.filter='all';try{return ceList55().filter(p=>!ceAccepted(p)&&ceNeedReason(p)===need);}finally{CE_UI.filter=f;}
+};
+const vContentEngine55=vContentEngine;vContentEngine=function(){
+ const counts=ceNeedCounts(),last=S.cfg.ceLastClean?.ids?.length||0;
+ return `<div class="panel" data-ce-need><h2>Потребують рішення</h2><p class="small muted">Описи, які не пройшли автоматичну перевірку, лишаються чернетками; на сайті — базовий опис із характеристик.</p><div class="row" role="group" aria-label="Причини">${Object.entries(CE_NEED_LABELS).map(([k,l])=>`<button class="btn small" data-act="ceNeedFilter" data-need="${k}" aria-pressed="${CE_UI.filter==='need:'+k}">${esc(l)} · ${counts[k]}</button>`).join('')}${String(CE_UI.filter).startsWith('need:')?'<button class="btn small" data-act="ceNeedFilter" data-need="">Усі</button>':''}</div>
+ <div class="row" style="margin-top:10px"><button class="btn primary" data-act="ceApplyClean" ${CE_UI.busy?'disabled':''}>Застосувати всі чисті описи</button>${last?`<button class="btn" data-act="ceUndoClean" ${CE_UI.busy?'disabled':''}>Скасувати останнє застосування (${last})</button>`:''}</div></div>`+vContentEngine55();
+};
+async function ceApplyClean(){
+ if(CE_UI.busy||S.snap){toast('Завершіть поточну операцію');return;}
+ CE_UI.busy=true;const index=ceBuildIndex(),ready=[];
+ try{
+  let n=0;for(const p of S.products.values()){if(p.archived||p.fieldMeta?.desc?.source==='manual'||(ceAccepted(p)&&p.contentEngine?.inputFingerprint===ceFingerprint(p)))continue;
+   p.contentDraft=ceChoose(p,index);markProduct(p,true);if(!ceAutoApplyReasons(p).length)ready.push(p);if(++n%25===0)await new Promise(r=>setTimeout(r,0));}
+ }finally{CE_UI.busy=false;}
+ if(!ready.length){toast('Чистих описів для застосування немає');render();return;}
+ if(!confirm(`Застосувати ${ready.length} чистих описів? Ручні описи не зміняться. Кожен поточний опис збережено — дію можна скасувати.`)){render();return;}
+ try{const backup=await createAutoBackup('Перед застосуванням чистих описів',{force:true});if(!backup)await Store.set('contentengine/before_apply',backupData('Перед застосуванням чистих описів'));}catch(e){toast('Резервну копію не створено. Описи не змінено.');return;}
+ const ids=[];for(const p of ready){if(ceApply(p).ok){ids.push(p.id);index.add(p,p.desc);}}
+ S.cfg.ceLastClean={at:Date.now(),ids};S.cfgDirty=true;bumpData();await persist();toast('Застосовано чистих описів: '+ids.length);render();
+}
+async function ceUndoClean(){
+ const ids=S.cfg.ceLastClean?.ids||[];if(!ids.length)return;
+ if(!confirm(`Повернути попередні описи для ${ids.length} товарів?`))return;
+ let n=0;for(const id of ids){const p=S.products.get(id);if(p&&ceUndo(p).ok)n++;}
+ S.cfg.ceLastClean=null;S.cfgDirty=true;bumpData();await persist();toast('Повернуто описів: '+n);render();
+}
+const ceAction55=ceAction;ceAction=async function(a,t){
+ if(a==='ceNeedFilter'){CE_UI.filter=t.dataset.need?'need:'+t.dataset.need:'all';CE_UI.page=0;render();return;}
+ if(a==='ceApplyClean'){await ceApplyClean();return;}
+ if(a==='ceUndoClean'){await ceUndoClean();return;}
+ return ceAction55(a,t);
+};
