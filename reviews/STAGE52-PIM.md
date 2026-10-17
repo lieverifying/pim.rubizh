@@ -29,7 +29,7 @@ fallback data time (`shop/stock-freshness.php`) — no SITE change. `stock_obser
 | `stage5-freshness` «no supplier time of its own: the import time is the data age …» | import time gives the age → the file time gives the age; import time alone → no age → manager confirmation | owner rule of stage 5.2 replaces the 5.1 fallback |
 | `order-policy` «stage 5.1 freshness …» last step | `stock_data_age_hours<0.1` from the import time (also true for `null`) → exactly `null` for the import time alone, and 5 h from a file time | the old assertion passed vacuously (`null<0.1`); the rule changed |
 
-New: `stage52-source-time` (9 tests), registered in `npm test`.
+New: `stage52-source-time` (11 tests: incl. security-review and code-review items), `stage5-freshness` +1 (unknown data time counted on the publication screen); registered in `npm test`.
 
 ## Rehearsal tooling (`audit/`, no supplier data in git)
 
@@ -46,4 +46,8 @@ Not fixed (recorded for the owner / next stage, see SITE `docs/release/KNOWN_ISS
 photos capped at 15 and `//` URLs dropped, duplicate SKU rows overwrite the queue key — none of them occurs in the five
 rehearsal files (checked: all UAH, integer or 2-decimal prices, no missing prices).
 
-Tests: 724 (+9), npm audit 0, build reproducible (three builds, one sha256, equal to the committed HTML).
+Reviews: silent-failure-hunter (four leaks fixed above, the rest recorded), security-reviewer (no CRITICAL/HIGH; MEDIUM: unverifiable header / server time = download time → shown as unverified; LOW fixed), code-reviewer APPROVE (MEDIUM: publication notice for unknown data time, scheduled-fetch warning → fixed).
+
+Rehearsal (private, `~/Projects/rubizh-supplier-files/out/run6`): 5 files, 8202 rows → 4232 products / 8191 SKUs / 11 in the queue; restore into a clean profile and through «Восстановить из файла» give the same catalog, the same settings and counts equal to the backup; no credentials in the backup; 0 network requests; AUTOPRICES off. The catalog reset keeps every business setting; it clears only undo history, site sync state and the site category hash and turns on model colours (by design).
+
+Tests: 727/727, npm audit 0, build reproducible (three builds, one sha256, equal to the committed HTML), release archive repacked.
