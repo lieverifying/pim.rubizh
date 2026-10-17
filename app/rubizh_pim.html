@@ -3979,7 +3979,7 @@ function attachItem(p, it){
   if (!v){ v = {sku:nextSku(), size:it.sz || "", color:it.c || "", barcode:it.bc || "", measurements:it.measurements||"",price:0, pin:"", offers:{}}; p.variants.push(v); }
   if (!v.barcode && it.bc) v.barcode = it.bc;
   v.offers = v.offers || {};
-  v.offers[it.sup] = {...structuredClone(it.classification_import_fields||{}),supplier_product_id:it.supplier_product_id||it.s,supplier_category_raw:it.supplier_category_raw??it.rcat??'',supplier_category_path_raw:it.supplier_category_path_raw??it.rcat??'',supplier_subcategory_raw:it.supplier_subcategory_raw||'',original_name:it.original_name||it.n,s:it.s,source_name:it.n,source_description:it.source_description||'',source_row_raw:it.source_row_raw||{},source_attributes:it.source_attributes||it.attrs||{},size_raw:it.rz||it.sz,color_raw:it.rc||it.c,invalid_stock:!!it.invalid_stock,source_model:it.m||'',native_color:it.rc||it.c||'', native_size:it.native_size||it.sz||"",measurements:it.measurements||"",stock:it.stock??null,priceInput:it.priceInput??null,priceType:it.priceType||"",cost:it.cost, rrp:it.rrp||0, payout:it.payout||it.cost||0, photos:(it.photos||[]).slice(), availability:itemAvail(it), leadDays:it.leadDays||null, rawAvailability:it.rawAvailability||"", at:it.at, missing:false, sharedSku:!!it.sharedSku, localizationTouched:!!it.localizationTouched, preorder:it.preorder != null ? !!it.preorder : supplierPreorderDefault(it.sup)};
+  v.offers[it.sup] = {...structuredClone(it.classification_import_fields||{}),supplier_product_id:it.supplier_product_id||it.s,supplier_category_raw:it.supplier_category_raw??it.rcat??'',supplier_category_path_raw:it.supplier_category_path_raw??it.rcat??'',supplier_subcategory_raw:it.supplier_subcategory_raw||'',original_name:it.original_name||it.n,s:it.s,source_name:it.n,source_description:it.source_description||'',source_row_raw:it.source_row_raw||{},source_attributes:it.source_attributes||it.attrs||{},size_raw:it.rz||it.sz,color_raw:it.rc||it.c,invalid_stock:!!it.invalid_stock,source_model:it.m||'',native_color:it.rc||it.c||'', native_size:it.native_size||it.sz||"",measurements:it.measurements||"",stock:it.stock??null,priceInput:it.priceInput??null,priceType:it.priceType||"",cost:it.cost, rrp:it.rrp||0, payout:it.payout||it.cost||0, photos:(it.photos||[]).slice(), availability:itemAvail(it), leadDays:it.leadDays||null, rawAvailability:it.rawAvailability||"", ...(Object.hasOwn(it,'source_time_provenance')?{stock_observed_at:it.stock_observed_at??null,stock_observation_provenance:it.stock_observation_provenance||'UNKNOWN',source_generated_at:it.source_generated_at??null,source_time_provenance:it.source_time_provenance,source_updated_at:it.source_updated_at??null,expires_at:it.expires_at??null,imported_at:it.imported_at??it.at??null}:{}), at:it.at, missing:false, sharedSku:!!it.sharedSku, localizationTouched:!!it.localizationTouched, preorder:it.preorder != null ? !!it.preorder : supplierPreorderDefault(it.sup)};
   S.queue.delete(it.k); markQueue(it.k);
 }
 function createFromGroup(gr, over = {}){
@@ -4215,7 +4215,7 @@ function runImport(sup, rows, hdr, map, opts){
     let reuseBlank=matches.find(x=>!String(x.v.size||'').trim()&&!String(x.v.color||'').trim());
     let baseProduct=matches.length?matches[0].p:modelFindExisting(sup,rec,inferredModel);
     const classificationImportFields=classificationEnabled()?{structured_size:rec.sizeInputProvenance==='DEDICATED_COLUMN'?rec.rz:null,variant_name:rec.variantName,size_input_provenance:rec.sizeInputProvenance,inventory_source_column:rec.inventorySourceColumn,feed_presence_confirmed:RubizhInventory.policy(sup).confirmed&&RubizhInventory.policy(sup).mode==='FEED_PRESENCE'&&RubizhInventory.policy(sup).feed_presence_confirmed===true,preorder_confirmed:rec.preorderConfirmed,order_on_request:rec.orderOnRequest,imported_at:now,stock_observed_at:rec.stockObservedAt,stock_observation_provenance:rec.stockObservedAt?'SUPPLIER_FIELD':'UNKNOWN',source_updated_at:rec.sourceUpdatedAt,expires_at:rec.stockExpiresAt}:{};
-    const baseOffer={classification_import_fields:classificationImportFields,...classificationImportFields,supplier_product_id:rec.supplierProductId,supplier_category_raw:rec.supplierCategoryRaw,supplier_category_path_raw:rec.supplierCategoryPathRaw,supplier_subcategory_raw:rec.supplierSubcategoryRaw,original_name:rec.sourceName,s:rec.sku,source_name:rec.sourceName||rec.name,source_description:rec.sourceDesc||'',source_row_raw:rec.sourceRowRaw||{},source_attributes:rec.sourceAttrs||rec.attrs||{},structured_size:rec.sizeInputProvenance==='DEDICATED_COLUMN'?rec.rz:null,variant_name:rec.variantName,size_input_provenance:rec.sizeInputProvenance,size_raw:rec.rz,color_raw:rec.rc,invalid_stock:!!rec.invalidStock,source_model:inferredModel,native_color:rawColor,stock:rec.stock,priceInput:parseNum(rows[r][map.cost]),priceType:tm.priceType||'',cost:rec.cost??0,rrp:rec.rrp??0,payout:rec.payout??rec.cost??0,availability:rec.availability,leadDays:rec.leadDays,rawAvailability:rec.rawAvailability,at:now,photos:rec.photos.slice(),missing:false,preorder:classificationEnabled()?rec.preorderConfirmed:rec.availability==='order'||supplierPreorderDefault(sup.id),preorder_confirmed:rec.preorderConfirmed,order_on_request:rec.orderOnRequest,imported_at:now,stock_observed_at:rec.stockObservedAt,stock_observation_provenance:rec.stockObservedAt?'SUPPLIER_FIELD':'UNKNOWN',source_updated_at:rec.sourceUpdatedAt,expires_at:rec.stockExpiresAt,sharedSku:multi};
+    const baseOffer={classification_import_fields:classificationImportFields,...classificationImportFields,supplier_product_id:rec.supplierProductId,supplier_category_raw:rec.supplierCategoryRaw,supplier_category_path_raw:rec.supplierCategoryPathRaw,supplier_subcategory_raw:rec.supplierSubcategoryRaw,original_name:rec.sourceName,s:rec.sku,source_name:rec.sourceName||rec.name,source_description:rec.sourceDesc||'',source_row_raw:rec.sourceRowRaw||{},source_attributes:rec.sourceAttrs||rec.attrs||{},structured_size:rec.sizeInputProvenance==='DEDICATED_COLUMN'?rec.rz:null,variant_name:rec.variantName,size_input_provenance:rec.sizeInputProvenance,size_raw:rec.rz,color_raw:rec.rc,invalid_stock:!!rec.invalidStock,source_model:inferredModel,native_color:rawColor,stock:rec.stock,priceInput:parseNum(rows[r][map.cost]),priceType:tm.priceType||'',cost:rec.cost??0,rrp:rec.rrp??0,payout:rec.payout??rec.cost??0,availability:rec.availability,leadDays:rec.leadDays,rawAvailability:rec.rawAvailability,at:now,photos:rec.photos.slice(),missing:false,preorder:classificationEnabled()?rec.preorderConfirmed:rec.availability==='order'||supplierPreorderDefault(sup.id),preorder_confirmed:rec.preorderConfirmed,order_on_request:rec.orderOnRequest,imported_at:now,stock_observed_at:rec.stockObservedAt,stock_observation_provenance:rec.stockObservedAt?'SUPPLIER_FIELD':'UNKNOWN',source_generated_at:S.imp?.source_time?.at??null,source_time_provenance:S.imp?.source_time?.provenance||'NONE',source_updated_at:rec.sourceUpdatedAt,expires_at:rec.stockExpiresAt,sharedSku:multi};
     for(let ci=0;ci<combos.length;ci++){
       const cv=combos[ci], size=normalizedSize(cv.size), color=mapVal(cfg.colorMap,cv.color), brand=normalizedBrand(rec.brand,rec.name);
       const canonColor=normalizeVariantColor(color);
@@ -4229,7 +4229,7 @@ function runImport(sup, rows, hdr, map, opts){
       const offer={...baseOffer,native_size:cv.size,measurements:sizeMeasurements(cv.size)?.measurements||"",variant_size:size,variant_color:canonColor};
       if(target){ applyOfferUpdate(target.p,target.v,sup,offer,rec,cat,catDec,ck,st,now);target.o=target.v.offers[sup.id];if(!matches.some(x=>x.v===target.v))matches.push(target);offerIndex.set(String(rec.sku),matches);const idKey='product-id:'+rec.supplierProductId,idMatches=offerIndex.get(idKey)||[];offerIndex.set(idKey,idMatches.filter(x=>x.v!==target.v).concat(target)); S.link.set(sup.id+'|'+rec.sku,{pid:target.p.id,sku:target.v.sku,sharedSku:multi}); continue; }
       const qprev=S.queue.get(key); touchQ(key);
-      S.queue.set(key,{classification_import_fields:structuredClone(classificationImportFields),supplier_product_id:rec.supplierProductId,supplier_category_raw:rec.supplierCategoryRaw,supplier_category_path_raw:rec.supplierCategoryPathRaw,supplier_subcategory_raw:rec.supplierSubcategoryRaw,original_name:rec.sourceName,canonical_category_id:catDec.canonical_category_id||null,category_status:catDec.category_status||'NEEDS_REVIEW',category_source:catDec.category_source,k:key,sup:sup.id,s:rec.sku,n:rec.name,b:brand,bc:(!multi||ci===0)?rec.barcode:'',sz:size,rz:cv.size,c:canonColor,rc:cv.color,cat,rcat:rec.category,m:inferredModel,attrs:rec.attrs,source_description:rec.sourceDesc,source_row_raw:rec.sourceRowRaw||{},source_attributes:rec.sourceAttrs,invalid_stock:!!rec.invalidStock,stock:offer.stock,native_size:cv.size,measurements:offer.measurements,priceInput:offer.priceInput,priceType:offer.priceType,cost:offer.cost,rrp:offer.rrp,payout:offer.payout,photos:offer.photos,availability:offer.availability,leadDays:offer.leadDays,rawAvailability:offer.rawAvailability,preorder:offer.preorder,sharedSku:multi,localizationTouched:!!rec.localizationTouched,at:now,importAt:now,ig:qprev?qprev.ig||0:0,review:null});
+      S.queue.set(key,{classification_import_fields:structuredClone(classificationImportFields),supplier_product_id:rec.supplierProductId,supplier_category_raw:rec.supplierCategoryRaw,supplier_category_path_raw:rec.supplierCategoryPathRaw,supplier_subcategory_raw:rec.supplierSubcategoryRaw,original_name:rec.sourceName,canonical_category_id:catDec.canonical_category_id||null,category_status:catDec.category_status||'NEEDS_REVIEW',category_source:catDec.category_source,k:key,sup:sup.id,s:rec.sku,n:rec.name,b:brand,bc:(!multi||ci===0)?rec.barcode:'',sz:size,rz:cv.size,c:canonColor,rc:cv.color,cat,rcat:rec.category,m:inferredModel,attrs:rec.attrs,source_description:rec.sourceDesc,source_row_raw:rec.sourceRowRaw||{},source_attributes:rec.sourceAttrs,invalid_stock:!!rec.invalidStock,stock:offer.stock,native_size:cv.size,measurements:offer.measurements,priceInput:offer.priceInput,priceType:offer.priceType,cost:offer.cost,rrp:offer.rrp,payout:offer.payout,photos:offer.photos,availability:offer.availability,leadDays:offer.leadDays,rawAvailability:offer.rawAvailability,preorder:offer.preorder,sharedSku:multi,localizationTouched:!!rec.localizationTouched,stock_observed_at:offer.stock_observed_at,stock_observation_provenance:offer.stock_observation_provenance,source_generated_at:offer.source_generated_at??null,source_time_provenance:offer.source_time_provenance||'NONE',source_updated_at:offer.source_updated_at,expires_at:offer.expires_at,imported_at:now,at:now,importAt:now,ig:qprev?qprev.ig||0:0,review:null});
       if(categoriesEnabled()&&qprev){const next=S.queue.get(key);if(qprev.category_source==='manual'){for(const field of ['cat','canonical_category_id','last_confirmed_category_id','category_source','category_status','category_review_status','category_confidence','category_rule_id','category_history'])if(Object.hasOwn(qprev,field))next[field]=structuredClone(qprev[field]);}else if(!catDec.canonical_category_id&&(qprev.canonical_category_id||qprev.last_confirmed_category_id)){next.canonical_category_id=qprev.canonical_category_id||qprev.last_confirmed_category_id;next.last_confirmed_category_id=next.canonical_category_id;next.cat=canonicalPath(next.canonical_category_id);}if(qprev.rcat!==rec.category)next.category_warnings=[...new Set([...(qprev.category_warnings||[]),'SUPPLIER_CATEGORY_CHANGED'])];}
       markQueue(key); st.queued++; if(!qprev) st.newInQueue++;
     }
@@ -4782,7 +4782,7 @@ function supplierPreorderDefault(sid){
 }
 function offerToQueue(p, v, sid, o){
   const key = sid + "|" + o.s;
-  S.queue.set(key, {k:key, sup:sid, s:o.s, n:p.name + (v.size ? " " + v.size : ""), b:p.brand, bc:v.barcode, sz:v.size, rz:v.size, c:v.color, rc:v.color, cat:p.category, rcat:p.srcCat || "", m:"", cost:o.cost, availability:offerAvail(o), leadDays:o.leadDays||null, rawAvailability:o.rawAvailability||"", preorder:!!o.preorder, at:o.at, ig:0});
+  S.queue.set(key, {k:key, sup:sid, s:o.s, n:p.name + (v.size ? " " + v.size : ""), b:p.brand, bc:v.barcode, sz:v.size, rz:v.size, c:v.color, rc:v.color, cat:p.category, rcat:p.srcCat || "", m:"", cost:o.cost, availability:offerAvail(o), leadDays:o.leadDays||null, rawAvailability:o.rawAvailability||"", preorder:!!o.preorder, stock_observed_at:o.stock_observed_at,stock_observation_provenance:o.stock_observation_provenance,source_generated_at:o.source_generated_at??null,source_time_provenance:o.source_time_provenance||'NONE',source_updated_at:o.source_updated_at,expires_at:o.expires_at,imported_at:o.imported_at??null,at:o.at, ig:0});
   markQueue(key);
 }
 function mergeInto(main, others){
@@ -4884,7 +4884,7 @@ function vImport(){
   const fieldName = k => { const f = FIELDS.find(x => x.k === k); const i = I.map[k]; return i == null || i === "" ? "не найдено" : headers[i]; };
 
   body += `<div class="panel" style="border:2px solid var(--accent)">
-    <div class="row"><div><b>${esc(I.file)}</b><div class="small muted">${I.rows.length - I.hdr - 1} строк</div></div><span class="spacer"></span><button class="btn small" data-act="impReset">Выбрать другой файл</button></div>
+    <div class="row"><div><b>${esc(I.file)}</b><div class="small muted">${I.rows.length - I.hdr - 1} строк</div>${I.source_time?`<div class="small${I.source_time.warning||I.source_time.provenance==='NONE'?' warn':''}" data-source-time>${esc(sourceFileTimeNote(I.source_time))}</div>`:''}</div><span class="spacer"></span><button class="btn small" data-act="impReset">Выбрать другой файл</button></div>
     <div class="row" style="margin-top:14px;align-items:flex-end">
       <label class="f" style="min-width:260px">Поставщик<select id="impSupLoaded"><option value="">Новый поставщик / не определён</option>${sups.map(s => `<option value="${s.id}" ${I.sup === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
       ${I.sup ? `<span class="tag in" style="margin-bottom:5px">${I.supAuto ? "определён автоматически" : "выбран"}</span>` : `<label class="f" style="flex:1 1 240px">Название нового поставщика<input id="newSupNameLoaded" value="${esc(I.newName || "")}" placeholder="Название поставщика"><span class="small muted">${I.detectedSupplierRaw?`В файле найдено: <b>${esc(I.detectedSupplierRaw)}</b>. Замените на короткое название (например, «Киборг») — PIM запомнит это правило и в следующий раз определит поставщика сама.`:'Имя файла не используется как название поставщика'}</span></label>`}
@@ -4989,16 +4989,16 @@ async function readFile(file){
   try {
     const isXml = /\.(xml|yml)$/i.test(file.name) || /^\s*<\?xml|^\s*<yml_catalog/i.test(await file.slice(0, 200).text());
     if (isXml){
-      const {rows, vendor} = parseYml(await file.text());
+      const {rows, vendor, generatedAt} = parseYml(await file.text());
       // XML/YML <vendor> is a PRODUCT BRAND/MANUFACTURER, not the feed supplier. Never use it to select a supplier.
       const nm = typed || "";
       const guessed = supId || guessSupplier(file.name, rows, 0);
-      S.imp = {sup:guessed, supAuto:!supId && !!guessed, newName:nm, detectedVendor:vendor||"", file:file.name, wb:null, sheets:["XML"], sheet:"XML", rows, hdr:0, zero:true, xml:true};
+      S.imp = {sup:guessed, supAuto:!supId && !!guessed, newName:nm, detectedVendor:vendor||"", file:file.name, wb:null, sheets:["XML"], sheet:"XML", rows, hdr:0, zero:true, xml:true, source_time:sourceFileTime({header:generatedAt,mtime:file.lastModified||null,payHours:freshnessPolicy().pay_fresh_hours})};
       remap(); render(); return;
     }
     if (typeof XLSX === "undefined"){ toast("Модуль чтения Excel не загрузился. Проверьте интернет и обновите страницу."); return; }
     const wb = workflowReadWorkbook(await file.arrayBuffer(),file.name);
-    S.imp = {sup:supId, supAuto:false, newName, file:file.name, wb, sheets:wb.SheetNames, zero:true};
+    S.imp = {sup:supId, supAuto:false, newName, file:file.name, wb, sheets:wb.SheetNames, zero:true, source_time:sourceFileTime({header:wb.Props?.ModifiedDate||wb.Props?.CreatedDate||null,mtime:file.lastModified||null,payHours:freshnessPolicy().pay_fresh_hours})};
     loadSheet(wb.SheetNames[0]);
     render();
   } catch (e) { toast("Не удалось прочитать файл: " + (e.message || e)); }
@@ -5097,7 +5097,8 @@ function parseYml(text){
       pics.join("\n"), kid(o, "description_ua") || kid(o, "description"), o.getAttribute("id") || "", kid(o, "url"), attrLines.join("\n"),catPaths[kid(o,"categoryId")]||"",cats[kid(o,"categoryId")]||"",kid(o,"stock_observed_at")||kid(o,"stock_updated_at")||pv("stock_observed_at","stock_updated_at"),kid(o,"preorder")||pv("preorder"),kid(o,"order_on_request")||pv("order_on_request"),kid(o,"source_updated_at")||pv("source_updated_at"),kid(o,"expires_at")||pv("expires_at"),avAttr===null?"":"available="+avRaw,availParam
     ]);
   }
-  return {rows, vendor, droppedAttrs};
+  // Stage 5.2: the feed's own generation date (yml_catalog@date) — the data time when offers carry none.
+  return {rows, vendor, droppedAttrs, generatedAt:doc.documentElement?.getAttribute("date")||null};
 }
 function loadSheet(name){
   const I = S.imp; I.sheet = name;
@@ -9537,20 +9538,22 @@ async function workflowDownloadSource(raw){const url=workflowSourceURL(raw),cont
  try{const response=await fetch(url,{signal:controller.signal,credentials:'omit',cache:'no-store'});if(!response.ok)throw Error('Поставщик вернул HTTP '+response.status);if(+response.headers.get('content-length')>limit)throw Error('Прайс больше 64 МБ.');
  const chunks=[];let total=0;if(response.body?.getReader){const reader=response.body.getReader();for(;;){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>limit){await reader.cancel();throw Error('Прайс больше 64 МБ.');}chunks.push(value);}}
  else{const bytes=await response.arrayBuffer();if(bytes.byteLength>limit)throw Error('Прайс больше 64 МБ.');chunks.push(bytes);}
- const blob=new Blob(chunks,{type:response.headers.get('content-type')||''});if(!blob.size)throw Error('Получен пустой файл прайса.');const text=await blob.slice(0,250).text();if(/text\/html/i.test(blob.type)||/^\s*<!doctype\s+html|^\s*<html\b/i.test(text))throw Error('Ссылка ведёт на страницу, а не на файл прайса.');return {blob,url};
+ const blob=new Blob(chunks,{type:response.headers.get('content-type')||''});if(!blob.size)throw Error('Получен пустой файл прайса.');const text=await blob.slice(0,250).text();if(/text\/html/i.test(blob.type)||/^\s*<!doctype\s+html|^\s*<html\b/i.test(text))throw Error('Ссылка ведёт на страницу, а не на файл прайса.');const modified=Date.parse(response.headers.get('last-modified')||'');return {blob,url,lastModified:Number.isFinite(modified)?modified:null};
  }catch(error){if(error.name==='AbortError')throw Error('Скачивание прайса заняло больше 45 секунд.');if(error.name==='TypeError')throw Error('Не удалось скачать прайс. Проверьте ссылку и разрешение CORS у поставщика; для закрытых источников нужен серверный загрузчик.');throw error;}finally{clearTimeout(timer);}
 }
 function workflowReadWorkbook(buffer,name){
  if(/\.(?:csv|tsv|txt)$/i.test(name)){let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(buffer);}catch{text=new TextDecoder('windows-1251').decode(buffer);}return XLSX.read(text.replace(/^\uFEFF/,''),{type:'string',raw:true});}
  return XLSX.read(buffer,{type:'array'});
 }
-async function workflowParseSource(download,supplier){const {blob,url}=download,name=new URL(url).pathname.split('/').pop()||'price.xlsx',profile=supplier.source?.profile,matchingURL=profile?.urlHash===fnvHash(url),isXml=/\.(xml|yml)$/i.test(name)||/^\s*<\?xml|^\s*<yml_catalog/i.test(await blob.slice(0,200).text());let rows,wb=null,sheets,sheet,hdr;
- if(isXml){rows=parseYml(await blob.text()).rows;sheets=['XML'];sheet='XML';hdr=0;}
- else{if(typeof XLSX==='undefined')throw Error('Модуль чтения прайса не загрузился.');wb=workflowReadWorkbook(await blob.arrayBuffer(),name);sheet=matchingURL&&wb.SheetNames.includes(profile.sheet)?profile.sheet:wb.SheetNames[0];if(!sheet)throw Error('В файле нет листов.');sheets=wb.SheetNames;rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true,blankrows:false});hdr=matchingURL&&Number.isInteger(profile.hdr)&&profile.hdr>=0&&profile.hdr<rows.length?profile.hdr:detectHeader(rows);}
+async function workflowParseSource(download,supplier){const {blob,url}=download;let header=null;const name=new URL(url).pathname.split('/').pop()||'price.xlsx',profile=supplier.source?.profile,matchingURL=profile?.urlHash===fnvHash(url),isXml=/\.(xml|yml)$/i.test(name)||/^\s*<\?xml|^\s*<yml_catalog/i.test(await blob.slice(0,200).text());let rows,wb=null,sheets,sheet,hdr;
+ if(isXml){const yml=parseYml(await blob.text());rows=yml.rows;header=yml.generatedAt;sheets=['XML'];sheet='XML';hdr=0;}
+ else{if(typeof XLSX==='undefined')throw Error('Модуль чтения прайса не загрузился.');wb=workflowReadWorkbook(await blob.arrayBuffer(),name);header=wb.Props?.ModifiedDate||wb.Props?.CreatedDate||null;sheet=matchingURL&&wb.SheetNames.includes(profile.sheet)?profile.sheet:wb.SheetNames[0];if(!sheet)throw Error('В файле нет листов.');sheets=wb.SheetNames;rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true,blankrows:false});hdr=matchingURL&&Number.isInteger(profile.hdr)&&profile.hdr>=0&&profile.hdr<rows.length?profile.hdr:detectHeader(rows);}
  if(!Array.isArray(rows)||rows.length<=hdr+1)throw Error('В прайсе нет товарных строк.');const headers=(rows[hdr]||[]).map(String),signature=fnvHash(JSON.stringify(headers)),profileValid=matchingURL&&profile.headers===signature&&(!profile.sheet||profile.sheet===sheet);
  const map=profileValid?structuredClone(profile.map):autoMap(headers,supplier.mapping);
  const missing=FIELDS.filter(f=>f.req&&(map[f.k]==null||map[f.k]===''));if(missing.length&&supplier.source?.autoApply)throw Error('Изменилась структура прайса. Проверьте обязательные колонки вручную.');
- return {sup:supplier.id,file:name,wb,sheets,sheet,rows,hdr,map,zero:false,xml:isXml,sourceId:supplier.id,sourceURLHash:fnvHash(url),sourceHeaders:signature,sourceProfileValid:profileValid};
+ // Stage 5.2: the data time of the file (inside it, else its modification time) — never the import time.
+ const source_time=sourceFileTime({header,mtime:download.lastModified??null,payHours:freshnessPolicy().pay_fresh_hours});
+ return {sup:supplier.id,file:name,wb,sheets,sheet,rows,hdr,map,zero:false,xml:isXml,source_time,sourceId:supplier.id,sourceURLHash:fnvHash(url),sourceHeaders:signature,sourceProfileValid:profileValid};
 }
 function workflowCanFetch(){return !S.snap&&!S.edit&&!S.priceDraft&&!CE_UI.busy&&!S.saving&&!S.imp?.rows&&!WORKFLOW.unsaved;}
 async function workflowFetchSource(sid,{scheduled=false}={}){
@@ -9581,6 +9584,43 @@ async function workflowAction(action,t){
  if(action==='wfFetchSource'){await workflowFetchSource(t.dataset.sid);return;}
  if(action==='wfRefreshSources'){await workflowRefreshSources(false);return;}
  throw Error('Действие не найдено. Обновите страницу и повторите.');
+}
+// Stage 5.2 (owner 2026-10-17): the data time of a supplier file. Without a per-offer supplier time the data is as old
+// as the file itself — the generation date inside it (YML yml_catalog@date, XLSX document properties), else the file's
+// modification time (File.lastModified / HTTP Last-Modified) — never the moment of the PIM import. A date without a
+// time zone is Kyiv wall time (the suppliers are in Ukraine), whatever zone this computer is in. A date in the future
+// (beyond 5 min) or before 2020 is not evidence and is skipped; nothing is clamped (clamping would manufacture freshness).
+const SOURCE_TIME_MIN=Date.UTC(2020,0,1);
+function sourceKyivTime(raw){
+ if(raw==null||raw==='')return null;
+ // A Date may come from another realm (a workbook parsed elsewhere): check the tag, not instanceof.
+ if(Object.prototype.toString.call(raw)==='[object Date]')return Number.isFinite(raw.getTime())?raw.getTime():null;
+ if(typeof raw==='number')return Number.isFinite(raw)?raw:null;
+ const text=String(raw).trim(),m=/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(text);
+ if(!m){const t=Date.parse(text);return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)&&Number.isFinite(t)?t:null;}
+ const [y,mo,d,h=0,mi=0,se=0]=m.slice(1).map(x=>x==null?0:Number(x)),wall=[y,mo,d,h,mi,se].join(',');
+ const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Kyiv',hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+ const seen=t=>{const p=Object.fromEntries(parts.formatToParts(new Date(t)).map(x=>[x.type,x.value]));return [+p.year,+p.month,+p.day,+p.hour,+p.minute,+p.second].join(',');};
+ // Kyiv is UTC+3 in summer, UTC+2 in winter; the repeated autumn hour takes the earlier (older) instant.
+ const ok=[3,2].map(off=>Date.UTC(y,mo-1,d,h,mi,se)-off*3600000).filter(t=>seen(t)===wall);
+ return ok.length?Math.min(...ok):null;
+}
+function sourceFileTime({header=null,mtime=null,now=Date.now(),payHours=72}={}){
+ const valid=t=>t!=null&&t>=SOURCE_TIME_MIN&&t<=now+300000?t:null;
+ const h=valid(sourceKyivTime(header)),f=valid(sourceKyivTime(mtime));
+ const out={at:null,provenance:'NONE',header:h,mtime:f,warning:null};
+ if(h!=null&&(f==null||h<=f+300000)){out.at=h;out.provenance='FILE_HEADER';if(f!=null&&f-h>payHours*3600000)out.warning='HEADER_OLDER_THAN_FILE';}
+ else if(f!=null){out.at=f;out.provenance='FILE_MTIME';if(h!=null)out.warning='HEADER_AFTER_FILE';}
+ if(header!=null&&header!==''&&h==null)out.warning=out.warning||'HEADER_DATE_INVALID';
+ return out;
+}
+function sourceFileTimeNote(t){
+ if(!t)return '';const day=x=>x==null?'—':new Date(x).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv'});
+ if(t.provenance==='NONE')return 'Дата даних файлу невідома — на сайті оплата лише після підтвердження менеджера.';
+ const base='Дані файлу станом на '+day(t.at)+(t.provenance==='FILE_HEADER'?' (дата у файлі)':' (дата збереження файлу)')+'.';
+ if(t.warning==='HEADER_OLDER_THAN_FILE')return base+' Увага: дата у файлі '+day(t.header)+', а файл збережено '+day(t.mtime)+' — постачальник міг не оновити дату або дані застарілі.';
+ if(t.warning==='HEADER_AFTER_FILE')return base+' Дата у файлі пізніша за дату збереження — взято дату збереження.';
+ return base;
 }
 
 // Canonical categories: explicit migration, supplier-scoped evidence and review.
@@ -9757,7 +9797,7 @@ const modelLegacySplit=splitVariants;splitVariants=async function(){const p=S.ed
 const modelLegacyMerge=mergeInto;mergeInto=function(main,others){if(main.variants.length+others.reduce((n,p)=>n+p.variants.length,0)>modelLimit(main))throw Error('Об’єднання перевищить ліміт варіантів. Підтвердьте правильну модель і ліміт у налаштуваннях.');const before=structuredClone(main);const result=modelLegacyMerge(...arguments);modelAudit(main,{variants:before.variants,merged_ids:[]},{variants:main.variants,merged_ids:others.map(p=>p.id)},'Ручне об’єднання карток');return result;};
 const modelLegacyImportResult=importResult;importResult=function(r){return modelLegacyImportResult(r)+`<section class="panel"><h2>Безпека даних</h2><p>Заблоковані моделі з надмірною кількістю варіантів: ${r.variantExplosionBlocked||0}.</p><button class="btn" data-view="dataModel">Якість, розміри та сумісність</button></section>`;};
 function modelFindExisting(supplier,rec,model){if(!modelEnabled()||!model)return null;const base=canonicalMasterText(masterBaseName(rec.name,rec.rz,rec.rc)),brand=norm(normalizedBrand(rec.brand,rec.name)),matches=[...S.products.values()].filter(p=>norm(p.brand)===brand&&canonicalMasterText(masterBaseName(p.name,'',''))===base&&p.variants.some(v=>Object.values(v.offers||{}).some(o=>o.source_model&&norm(o.source_model)===norm(model)))&&p.variants.some(v=>v.offers?.[supplier.id]));return matches.length===1?matches[0]:null;}
-function modelParkVariant(sup,rec,baseOffer,cv,key,cat,catDec,now,stats){touchQ(key);const existing=S.queue.has(key);S.queue.set(key,{k:key,sup:sup.id,s:rec.sku,n:rec.name,original_name:rec.sourceName,b:normalizedBrand(rec.brand,rec.name),sz:normalizedSize(cv.size),rz:cv.size,c:normalizeVariantColor(cv.color),rc:cv.color,m:baseOffer.source_model,cat,rcat:rec.category,canonical_category_id:catDec.canonical_category_id,category_status:catDec.category_status,supplier_product_id:rec.supplierProductId,supplier_category_raw:rec.supplierCategoryRaw,supplier_category_path_raw:rec.supplierCategoryPathRaw,attrs:rec.attrs,source_description:rec.sourceDesc,source_row_raw:rec.sourceRowRaw,source_attributes:rec.sourceAttrs,cost:baseOffer.cost,payout:baseOffer.payout,rrp:baseOffer.rrp,stock:baseOffer.stock,availability:baseOffer.availability,photos:baseOffer.photos,at:now,importAt:now,ig:0,review:{type:'variant_explosion',at:now}});markQueue(key);stats.queued++;if(!existing)stats.newInQueue++;}
+function modelParkVariant(sup,rec,baseOffer,cv,key,cat,catDec,now,stats){touchQ(key);const existing=S.queue.has(key);S.queue.set(key,{k:key,sup:sup.id,s:rec.sku,n:rec.name,original_name:rec.sourceName,b:normalizedBrand(rec.brand,rec.name),sz:normalizedSize(cv.size),rz:cv.size,c:normalizeVariantColor(cv.color),rc:cv.color,m:baseOffer.source_model,cat,rcat:rec.category,canonical_category_id:catDec.canonical_category_id,category_status:catDec.category_status,supplier_product_id:rec.supplierProductId,supplier_category_raw:rec.supplierCategoryRaw,supplier_category_path_raw:rec.supplierCategoryPathRaw,attrs:rec.attrs,source_description:rec.sourceDesc,source_row_raw:rec.sourceRowRaw,source_attributes:rec.sourceAttrs,cost:baseOffer.cost,payout:baseOffer.payout,rrp:baseOffer.rrp,stock:baseOffer.stock,availability:baseOffer.availability,photos:baseOffer.photos,stock_observed_at:baseOffer.stock_observed_at,stock_observation_provenance:baseOffer.stock_observation_provenance,source_generated_at:baseOffer.source_generated_at??null,source_time_provenance:baseOffer.source_time_provenance||'NONE',source_updated_at:baseOffer.source_updated_at,expires_at:baseOffer.expires_at,imported_at:now,at:now,importAt:now,ig:0,review:{type:'variant_explosion',at:now}});markQueue(key);stats.queued++;if(!existing)stats.newInQueue++;}
 const modelLegacyLink=linkGroup;linkGroup=function(g,pid){const p=S.products.get(pid);if(p&&(p.variants.length+g.items.length)>modelLimit(p))throw Error('Прив’язка перевищує ліміт варіантів.');return modelLegacyLink(...arguments);};
 function modelImportImpact(I=S.imp){if(!I?.preview||!S.snap)return null;const rows=[];for(const [id,before] of S.snap.products){const after=S.products.get(id);if(!after)continue;const oldVariants=new Map((before?.variants||[]).map(v=>[v.sku,v])),changes=[];for(const v of after.variants){const old=oldVariants.get(v.sku);if(!old){changes.push('new_variant');continue;}if(stableValue105(old.offers)!==stableValue105(v.offers)){if(Object.entries(v.offers||{}).some(([sid,o])=>o.cost!==old.offers?.[sid]?.cost||o.rrp!==old.offers?.[sid]?.rrp))changes.push('price');if(Object.entries(v.offers||{}).some(([sid,o])=>o.stock!==old.offers?.[sid]?.stock||o.availability!==old.offers?.[sid]?.availability))changes.push('stock');}if(Object.values(v.offers||{}).some(o=>o.priceAlert))changes.push('price_anomaly');}if(before?.canonical_category_id!==after.canonical_category_id)changes.push('category');if(before?.archived!==after.archived)changes.push(after.archived?'supplier_inactive':'restored');rows.push({id,name:after.name,new_product:!before,old_category:before?.canonical_category_id||null,new_category:after.canonical_category_id||null,changes:[...new Set(changes)]});}return {rows,counts:{new_products:rows.filter(r=>r.new_product).length,updated:rows.filter(r=>!r.new_product).length,new_variants:I.preview.reduce((n,r)=>n+(r.createdVariants||0),0),price_changes:rows.filter(r=>r.changes.includes('price')).length,stock_changes:rows.filter(r=>r.changes.includes('stock')).length,category_changes:rows.filter(r=>r.changes.includes('category')).length,price_anomalies:rows.filter(r=>r.changes.includes('price_anomaly')).length,parked_variants:I.preview.reduce((n,r)=>n+(r.parkedVariants||0),0)}};}
 const modelLegacyImportView=vImport;vImport=function(){const h=modelLegacyImportView(),impact=modelImportImpact();return h+(impact?`<section class="panel"><h2>Що змінить IMPORT</h2><p>${Object.entries(impact.counts).map(([k,n])=>esc(({new_products:'Нові картки',updated:'Оновлення',new_variants:'Нові варіанти',price_changes:'Зміни цін',stock_changes:'Зміни залишків',category_changes:'Зміни категорій',price_anomalies:'Різкі ціни',parked_variants:'Варіанти в черзі'})[k])+': '+n).join(' · ')}</p><div class="tablewrap"><table><tbody>${impact.rows.slice(0,20).map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.old_category||'—')} → ${esc(r.new_category||'—')}</td><td>${r.changes.map(esc).join(', ')}</td></tr>`).join('')}</tbody></table></div></section>`:'');};
@@ -10294,12 +10334,14 @@ function classificationPermissions(availability){
  const payment=availability==='IN_STOCK',request=['PREORDER','SIZE_CONFIRMATION_REQUIRED','ORDER_ON_REQUEST'].includes(availability);
  return {order_submission_allowed:payment||request,payment_allowed:payment,requires_order_confirmation:request||availability==='UNKNOWN'};
 }
-// Data age: the supplier's own observation time if the file has one, else the import time (stage 5.1: weekly imports
-// carry no supplier timestamp, so the import is what the data is as old as). stock_imported_at goes to SITE with the SKU.
+// Data age: the supplier's own per-offer observation time, else the time of the supplier FILE (stage 5.2: its generation
+// date inside the file, else its modification time — never the import time; imported_at stays an audit field). The file
+// time goes to SITE in the wire field stock_imported_at (legacy name kept: SITE reads it as the fallback data time).
+// No time at all → no age → sold only after the manager confirms (fail closed).
 function classificationStockMetadata(o){
- const observed=classificationSourceTimestamp(classificationObservedAt(o)),imported=classificationSourceTimestamp(o?.imported_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??imported,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
+ const observed=classificationSourceTimestamp(classificationObservedAt(o)),source=classificationSourceTimestamp(o?.source_generated_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??source,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
  const expires=classificationSourceTimestamp(o?.expires_at,true);
- return {stock_observed_at:observed,stock_imported_at:imported,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
+ return {stock_observed_at:observed,stock_imported_at:source,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
 }
 const classificationLegacyOfferStale=offerStale;
 offerStale=function(o,cfg=S.cfg){return classificationReviewMode()||classificationEnabled()?false:classificationLegacyOfferStale(o,cfg);};
@@ -10362,10 +10404,10 @@ variantCombos=function(rec){
 };
 function classificationRetainStock(old,o,rec,v,sup){
  const policy=RubizhInventory.policy(sup),manual=!!(v.manualFields?.stock||v.manual_locks?.stock||v.fieldMeta?.stock?.source==='manual'||old?.stock_manual||v.manualFields?.availability||v.manual_locks?.availability);
- const incoming={...o,stock:rec.stock,invalid_stock:rec.invalidStock,source_updated_at:rec.sourceUpdatedAt,stock_observed_at:rec.stockObservedAt};
+ const incoming={...o,stock:rec.stock,invalid_stock:rec.invalidStock,source_updated_at:rec.sourceUpdatedAt,stock_observed_at:rec.stockObservedAt,source_generated_at:S.imp?.source_time?.at??null};
  const decision=RubizhInventory.retain(policy,old?classificationInventoryContext(old,v):null,incoming,{manual});
  if(decision.retained&&old){
-  for(const k of ['stock','invalid_stock','rawAvailability','availability','preorder','preorder_confirmed','order_on_request','leadDays','stock_observed_at','stock_observation_provenance','source_updated_at','expires_at','stock_manual','availability_manual','manual_availability_status','last_valid_stock_observation'])if(Object.hasOwn(old,k))o[k]=structuredClone(old[k]);else delete o[k];
+  for(const k of ['stock','invalid_stock','rawAvailability','availability','preorder','preorder_confirmed','order_on_request','leadDays','stock_observed_at','stock_observation_provenance','source_generated_at','source_time_provenance','source_updated_at','expires_at','stock_manual','availability_manual','manual_availability_status','last_valid_stock_observation'])if(Object.hasOwn(old,k))o[k]=structuredClone(old[k]);else delete o[k];
   o.invalid_stock=!!old.invalid_stock;if(!Object.hasOwn(o,'stock_observed_at'))o.stock_observed_at=classificationObservedAt(old);
   o.stock_input_warning=decision.warning==='INVALID_AVAILABILITY_RETAINED'&&policy.mode==='QUANTITY'?'INVALID_OR_MISSING_STOCK_RETAINED':decision.warning;
  }else {o.source_updated_at=rec.sourceUpdatedAt;o.expires_at=rec.stockExpiresAt;delete o.stock_input_warning;}

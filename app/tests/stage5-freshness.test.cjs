@@ -55,10 +55,12 @@ test('9 days: publication stops with «Скільки товарів буде п
  const notice=h.run('finalFreshnessNotice()');assert.match(notice,/Скільки товарів буде приховано: 1/);assert.match(notice,/старші за 8 днів: товари приховано з сайту/);assert.match(notice,/data-final="publishStale"/);
  assert.match(h.run('finalFreshnessBlock()'),/^STALE_DATA: .*Скільки товарів буде приховано: 1/);assert.equal(h.run('finalFreshnessBlock({allowStale:true})'),'');
 });
-test('no supplier time of its own: the import time is the data age and goes to SITE (stage 5 counted no age for weekly imports)',()=>{
- const h=setup(80,{imported:true}),v=variant(h);
- assert.equal(v.stock_observed_at,null,'the import is still not an observation');assert.ok(v.stock_imported_at>0);assert.ok(v.stock_data_age_hours>=80);assert.equal(v.stale_source,true);
+test('no supplier time of its own: the supplier FILE time is the data age and goes to SITE; the import time alone is no age (stage 5.2)',()=>{
+ // Stage 5.1 used the import time here; the owner replaced it (stage 5.2): the file's generation time, never the import.
+ let h=setup(80,{imported:true});h.run('Object.assign(S.products.get("p-a").variants[0].offers["supplier-a"],{source_generated_at:Date.now()-80*3600000,source_time_provenance:"FILE_HEADER",imported_at:Date.now()});bumpData()');
+ let v=variant(h);assert.equal(v.stock_observed_at,null,'the import is still not an observation');assert.ok(v.stock_imported_at>0);assert.ok(v.stock_data_age_hours>=80);assert.equal(v.stale_source,true);
  assert.equal(cls(h),'confirm');assert.equal(js(h,'finalFreshness()').confirm_products,1);
+ h=setup(1,{imported:true});v=variant(h);assert.equal(v.stock_imported_at,null,'imported just now, but no file time → no data time on the wire');assert.equal(v.stock_data_age_hours,null);assert.equal(cls(h),'confirm','fail closed');
 });
 test('a manually confirmed stock has no data age: no warning, never hidden',()=>{
  const h=setup(20*24);h.run('S.products.get("p-a").variants[0].manualFields={stock:true};bumpData()');

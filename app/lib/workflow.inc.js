@@ -100,20 +100,22 @@ async function workflowDownloadSource(raw){const url=workflowSourceURL(raw),cont
  try{const response=await fetch(url,{signal:controller.signal,credentials:'omit',cache:'no-store'});if(!response.ok)throw Error('Поставщик вернул HTTP '+response.status);if(+response.headers.get('content-length')>limit)throw Error('Прайс больше 64 МБ.');
  const chunks=[];let total=0;if(response.body?.getReader){const reader=response.body.getReader();for(;;){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>limit){await reader.cancel();throw Error('Прайс больше 64 МБ.');}chunks.push(value);}}
  else{const bytes=await response.arrayBuffer();if(bytes.byteLength>limit)throw Error('Прайс больше 64 МБ.');chunks.push(bytes);}
- const blob=new Blob(chunks,{type:response.headers.get('content-type')||''});if(!blob.size)throw Error('Получен пустой файл прайса.');const text=await blob.slice(0,250).text();if(/text\/html/i.test(blob.type)||/^\s*<!doctype\s+html|^\s*<html\b/i.test(text))throw Error('Ссылка ведёт на страницу, а не на файл прайса.');return {blob,url};
+ const blob=new Blob(chunks,{type:response.headers.get('content-type')||''});if(!blob.size)throw Error('Получен пустой файл прайса.');const text=await blob.slice(0,250).text();if(/text\/html/i.test(blob.type)||/^\s*<!doctype\s+html|^\s*<html\b/i.test(text))throw Error('Ссылка ведёт на страницу, а не на файл прайса.');const modified=Date.parse(response.headers.get('last-modified')||'');return {blob,url,lastModified:Number.isFinite(modified)?modified:null};
  }catch(error){if(error.name==='AbortError')throw Error('Скачивание прайса заняло больше 45 секунд.');if(error.name==='TypeError')throw Error('Не удалось скачать прайс. Проверьте ссылку и разрешение CORS у поставщика; для закрытых источников нужен серверный загрузчик.');throw error;}finally{clearTimeout(timer);}
 }
 function workflowReadWorkbook(buffer,name){
  if(/\.(?:csv|tsv|txt)$/i.test(name)){let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(buffer);}catch{text=new TextDecoder('windows-1251').decode(buffer);}return XLSX.read(text.replace(/^\uFEFF/,''),{type:'string',raw:true});}
  return XLSX.read(buffer,{type:'array'});
 }
-async function workflowParseSource(download,supplier){const {blob,url}=download,name=new URL(url).pathname.split('/').pop()||'price.xlsx',profile=supplier.source?.profile,matchingURL=profile?.urlHash===fnvHash(url),isXml=/\.(xml|yml)$/i.test(name)||/^\s*<\?xml|^\s*<yml_catalog/i.test(await blob.slice(0,200).text());let rows,wb=null,sheets,sheet,hdr;
- if(isXml){rows=parseYml(await blob.text()).rows;sheets=['XML'];sheet='XML';hdr=0;}
- else{if(typeof XLSX==='undefined')throw Error('Модуль чтения прайса не загрузился.');wb=workflowReadWorkbook(await blob.arrayBuffer(),name);sheet=matchingURL&&wb.SheetNames.includes(profile.sheet)?profile.sheet:wb.SheetNames[0];if(!sheet)throw Error('В файле нет листов.');sheets=wb.SheetNames;rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true,blankrows:false});hdr=matchingURL&&Number.isInteger(profile.hdr)&&profile.hdr>=0&&profile.hdr<rows.length?profile.hdr:detectHeader(rows);}
+async function workflowParseSource(download,supplier){const {blob,url}=download;let header=null;const name=new URL(url).pathname.split('/').pop()||'price.xlsx',profile=supplier.source?.profile,matchingURL=profile?.urlHash===fnvHash(url),isXml=/\.(xml|yml)$/i.test(name)||/^\s*<\?xml|^\s*<yml_catalog/i.test(await blob.slice(0,200).text());let rows,wb=null,sheets,sheet,hdr;
+ if(isXml){const yml=parseYml(await blob.text());rows=yml.rows;header=yml.generatedAt;sheets=['XML'];sheet='XML';hdr=0;}
+ else{if(typeof XLSX==='undefined')throw Error('Модуль чтения прайса не загрузился.');wb=workflowReadWorkbook(await blob.arrayBuffer(),name);header=wb.Props?.ModifiedDate||wb.Props?.CreatedDate||null;sheet=matchingURL&&wb.SheetNames.includes(profile.sheet)?profile.sheet:wb.SheetNames[0];if(!sheet)throw Error('В файле нет листов.');sheets=wb.SheetNames;rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:'',raw:true,blankrows:false});hdr=matchingURL&&Number.isInteger(profile.hdr)&&profile.hdr>=0&&profile.hdr<rows.length?profile.hdr:detectHeader(rows);}
  if(!Array.isArray(rows)||rows.length<=hdr+1)throw Error('В прайсе нет товарных строк.');const headers=(rows[hdr]||[]).map(String),signature=fnvHash(JSON.stringify(headers)),profileValid=matchingURL&&profile.headers===signature&&(!profile.sheet||profile.sheet===sheet);
  const map=profileValid?structuredClone(profile.map):autoMap(headers,supplier.mapping);
  const missing=FIELDS.filter(f=>f.req&&(map[f.k]==null||map[f.k]===''));if(missing.length&&supplier.source?.autoApply)throw Error('Изменилась структура прайса. Проверьте обязательные колонки вручную.');
- return {sup:supplier.id,file:name,wb,sheets,sheet,rows,hdr,map,zero:false,xml:isXml,sourceId:supplier.id,sourceURLHash:fnvHash(url),sourceHeaders:signature,sourceProfileValid:profileValid};
+ // Stage 5.2: the data time of the file (inside it, else its modification time) — never the import time.
+ const source_time=sourceFileTime({header,mtime:download.lastModified??null,payHours:freshnessPolicy().pay_fresh_hours});
+ return {sup:supplier.id,file:name,wb,sheets,sheet,rows,hdr,map,zero:false,xml:isXml,source_time,sourceId:supplier.id,sourceURLHash:fnvHash(url),sourceHeaders:signature,sourceProfileValid:profileValid};
 }
 function workflowCanFetch(){return !S.snap&&!S.edit&&!S.priceDraft&&!CE_UI.busy&&!S.saving&&!S.imp?.rows&&!WORKFLOW.unsaved;}
 async function workflowFetchSource(sid,{scheduled=false}={}){
@@ -144,4 +146,41 @@ async function workflowAction(action,t){
  if(action==='wfFetchSource'){await workflowFetchSource(t.dataset.sid);return;}
  if(action==='wfRefreshSources'){await workflowRefreshSources(false);return;}
  throw Error('Действие не найдено. Обновите страницу и повторите.');
+}
+// Stage 5.2 (owner 2026-10-17): the data time of a supplier file. Without a per-offer supplier time the data is as old
+// as the file itself — the generation date inside it (YML yml_catalog@date, XLSX document properties), else the file's
+// modification time (File.lastModified / HTTP Last-Modified) — never the moment of the PIM import. A date without a
+// time zone is Kyiv wall time (the suppliers are in Ukraine), whatever zone this computer is in. A date in the future
+// (beyond 5 min) or before 2020 is not evidence and is skipped; nothing is clamped (clamping would manufacture freshness).
+const SOURCE_TIME_MIN=Date.UTC(2020,0,1);
+function sourceKyivTime(raw){
+ if(raw==null||raw==='')return null;
+ // A Date may come from another realm (a workbook parsed elsewhere): check the tag, not instanceof.
+ if(Object.prototype.toString.call(raw)==='[object Date]')return Number.isFinite(raw.getTime())?raw.getTime():null;
+ if(typeof raw==='number')return Number.isFinite(raw)?raw:null;
+ const text=String(raw).trim(),m=/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(text);
+ if(!m){const t=Date.parse(text);return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)&&Number.isFinite(t)?t:null;}
+ const [y,mo,d,h=0,mi=0,se=0]=m.slice(1).map(x=>x==null?0:Number(x)),wall=[y,mo,d,h,mi,se].join(',');
+ const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Kyiv',hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+ const seen=t=>{const p=Object.fromEntries(parts.formatToParts(new Date(t)).map(x=>[x.type,x.value]));return [+p.year,+p.month,+p.day,+p.hour,+p.minute,+p.second].join(',');};
+ // Kyiv is UTC+3 in summer, UTC+2 in winter; the repeated autumn hour takes the earlier (older) instant.
+ const ok=[3,2].map(off=>Date.UTC(y,mo-1,d,h,mi,se)-off*3600000).filter(t=>seen(t)===wall);
+ return ok.length?Math.min(...ok):null;
+}
+function sourceFileTime({header=null,mtime=null,now=Date.now(),payHours=72}={}){
+ const valid=t=>t!=null&&t>=SOURCE_TIME_MIN&&t<=now+300000?t:null;
+ const h=valid(sourceKyivTime(header)),f=valid(sourceKyivTime(mtime));
+ const out={at:null,provenance:'NONE',header:h,mtime:f,warning:null};
+ if(h!=null&&(f==null||h<=f+300000)){out.at=h;out.provenance='FILE_HEADER';if(f!=null&&f-h>payHours*3600000)out.warning='HEADER_OLDER_THAN_FILE';}
+ else if(f!=null){out.at=f;out.provenance='FILE_MTIME';if(h!=null)out.warning='HEADER_AFTER_FILE';}
+ if(header!=null&&header!==''&&h==null)out.warning=out.warning||'HEADER_DATE_INVALID';
+ return out;
+}
+function sourceFileTimeNote(t){
+ if(!t)return '';const day=x=>x==null?'—':new Date(x).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv'});
+ if(t.provenance==='NONE')return 'Дата даних файлу невідома — на сайті оплата лише після підтвердження менеджера.';
+ const base='Дані файлу станом на '+day(t.at)+(t.provenance==='FILE_HEADER'?' (дата у файлі)':' (дата збереження файлу)')+'.';
+ if(t.warning==='HEADER_OLDER_THAN_FILE')return base+' Увага: дата у файлі '+day(t.header)+', а файл збережено '+day(t.mtime)+' — постачальник міг не оновити дату або дані застарілі.';
+ if(t.warning==='HEADER_AFTER_FILE')return base+' Дата у файлі пізніша за дату збереження — взято дату збереження.';
+ return base;
 }

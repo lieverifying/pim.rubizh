@@ -186,12 +186,14 @@ function classificationPermissions(availability){
  const payment=availability==='IN_STOCK',request=['PREORDER','SIZE_CONFIRMATION_REQUIRED','ORDER_ON_REQUEST'].includes(availability);
  return {order_submission_allowed:payment||request,payment_allowed:payment,requires_order_confirmation:request||availability==='UNKNOWN'};
 }
-// Data age: the supplier's own observation time if the file has one, else the import time (stage 5.1: weekly imports
-// carry no supplier timestamp, so the import is what the data is as old as). stock_imported_at goes to SITE with the SKU.
+// Data age: the supplier's own per-offer observation time, else the time of the supplier FILE (stage 5.2: its generation
+// date inside the file, else its modification time — never the import time; imported_at stays an audit field). The file
+// time goes to SITE in the wire field stock_imported_at (legacy name kept: SITE reads it as the fallback data time).
+// No time at all → no age → sold only after the manager confirms (fail closed).
 function classificationStockMetadata(o){
- const observed=classificationSourceTimestamp(classificationObservedAt(o)),imported=classificationSourceTimestamp(o?.imported_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??imported,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
+ const observed=classificationSourceTimestamp(classificationObservedAt(o)),source=classificationSourceTimestamp(o?.source_generated_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??source,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
  const expires=classificationSourceTimestamp(o?.expires_at,true);
- return {stock_observed_at:observed,stock_imported_at:imported,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
+ return {stock_observed_at:observed,stock_imported_at:source,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
 }
 const classificationLegacyOfferStale=offerStale;
 offerStale=function(o,cfg=S.cfg){return classificationReviewMode()||classificationEnabled()?false:classificationLegacyOfferStale(o,cfg);};
@@ -254,10 +256,10 @@ variantCombos=function(rec){
 };
 function classificationRetainStock(old,o,rec,v,sup){
  const policy=RubizhInventory.policy(sup),manual=!!(v.manualFields?.stock||v.manual_locks?.stock||v.fieldMeta?.stock?.source==='manual'||old?.stock_manual||v.manualFields?.availability||v.manual_locks?.availability);
- const incoming={...o,stock:rec.stock,invalid_stock:rec.invalidStock,source_updated_at:rec.sourceUpdatedAt,stock_observed_at:rec.stockObservedAt};
+ const incoming={...o,stock:rec.stock,invalid_stock:rec.invalidStock,source_updated_at:rec.sourceUpdatedAt,stock_observed_at:rec.stockObservedAt,source_generated_at:S.imp?.source_time?.at??null};
  const decision=RubizhInventory.retain(policy,old?classificationInventoryContext(old,v):null,incoming,{manual});
  if(decision.retained&&old){
-  for(const k of ['stock','invalid_stock','rawAvailability','availability','preorder','preorder_confirmed','order_on_request','leadDays','stock_observed_at','stock_observation_provenance','source_updated_at','expires_at','stock_manual','availability_manual','manual_availability_status','last_valid_stock_observation'])if(Object.hasOwn(old,k))o[k]=structuredClone(old[k]);else delete o[k];
+  for(const k of ['stock','invalid_stock','rawAvailability','availability','preorder','preorder_confirmed','order_on_request','leadDays','stock_observed_at','stock_observation_provenance','source_generated_at','source_time_provenance','source_updated_at','expires_at','stock_manual','availability_manual','manual_availability_status','last_valid_stock_observation'])if(Object.hasOwn(old,k))o[k]=structuredClone(old[k]);else delete o[k];
   o.invalid_stock=!!old.invalid_stock;if(!Object.hasOwn(o,'stock_observed_at'))o.stock_observed_at=classificationObservedAt(old);
   o.stock_input_warning=decision.warning==='INVALID_AVAILABILITY_RETAINED'&&policy.mode==='QUANTITY'?'INVALID_OR_MISSING_STOCK_RETAINED':decision.warning;
  }else {o.source_updated_at=rec.sourceUpdatedAt;o.expires_at=rec.stockExpiresAt;delete o.stock_input_warning;}
