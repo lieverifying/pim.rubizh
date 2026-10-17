@@ -9157,6 +9157,31 @@ const ceAction55=ceAction;ceAction=async function(a,t){
  return ceAction55(a,t);
 };
 
+// Stage 5.5 (owner D-71): report-only checks of the supplier text against PIM data. Nothing is changed — prices, stock flags
+// and lead times stay as they are; a product with a row stays out of the first wave (D-74, condition 10).
+//  «Можлива недоплата»: the supplier asks a surcharge for some sizes («58-62р +50грн»), PIM prices them no higher than the base.
+//  «Постачальник пише «під замовлення», а в PIM — в наявності»: made to order / N days of manufacturing in the text, while a
+//  SKU is in stock in PIM without a confirmed lead time.
+function supplierTextChecks(p){
+ const rows=[],text=autoUkText(ceSourcePlain(ceSupplierSource(p)||'')),variants=p?.variants||[];if(!text||!variants.length)return rows;
+ const priced=variants.map(v=>({v,size:String(realVal(v.size)||''),c:calc(p,v)})).filter(x=>x.c.price!=null);
+ const base=priced.length?Math.min(...priced.map(x=>+x.c.price)):null;
+ for(const m of text.matchAll(/((\d{2,3})\s*(?:[-–]\s*(\d{2,3})|(?:\s*,\s*\d{2,3})+)\s*р\.?\p{L}*[^+\n]{0,20}\+\s*(\d[\d\s]*)\s*(?:грн|₴))/giu)){
+  const list=(m[0].match(/\d{2,3}(?=\s*[-–,р]|\s*р)/g)||[]).map(Number),lo=Number(m[2]),hi=m[3]?Number(m[3]):null;
+  let matched=false;
+  for(const x of priced){const n=Number(x.size);if(!x.size||!Number.isFinite(n))continue;const hit=hi!=null?n>=lo&&n<=hi:list.includes(n);if(!hit)continue;matched=true;
+   if(base!=null&&+x.c.price<=base)rows.push({kind:'underpaid',label:'Можлива недоплата',size:x.size,sku:x.v.sku,text:m[0].trim(),price:+x.c.price,base_price:base});}
+  // One price for every size (the size is confirmed by the manager): the surcharged sizes are sold at the base price.
+  if(!matched&&base!=null&&!priced.some(x=>Number.isFinite(Number(x.size))&&x.size))rows.push({kind:'underpaid',label:'Можлива недоплата',size:hi!=null?lo+'–'+hi:list.join(', '),sku:priced.map(x=>x.v.sku).join(', '),text:m[0].trim(),price:base,base_price:base});
+ }
+ if(/під\s+замовлення|на\s+замовлення|под\s+заказ|термін\p{L}*\s+виготовлен\p{L}*\s*[:—–-]?\s*(?:від\s+)?\d|срок\p{L}*\s+изготовлен\p{L}*/iu.test(text)){
+  const inStock=priced.filter(x=>x.c.avail==='in'&&confirmedPreorderDays(x.c.o||x.c.ref)==null);
+  if(inStock.length){const m=text.match(/[^.\n]*(?:під\s+замовлення|на\s+замовлення|под\s+заказ|термін\p{L}*\s+виготовлен|срок\p{L}*\s+изготовлен)[^.\n]*/iu);rows.push({kind:'made_to_order',label:'Постачальник пише «під замовлення», а в PIM — в наявності',sku:inStock.map(x=>x.v.sku).join(', '),size:inStock.map(x=>x.size).filter(Boolean).join(', '),text:(m?.[0]||'').trim().slice(0,200)});}
+ }
+ return rows;
+}
+const supplierTextChecksMemo=memoProd('supplierTextChecks55',supplierTextChecks);
+
 // Free supplier localization (10.6.0). No external requests or model downloads.
 const CE_EXTRA_WORDS108={
  'каждый':'кожен','каждая':'кожна','каждое':'кожне','каждого':'кожного','собственную':'власну','собственной':'власної','собственные':'власні',
