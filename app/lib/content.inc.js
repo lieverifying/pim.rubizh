@@ -349,13 +349,22 @@ function nameApply(p,d=nameDraft(p)){
  if(!p||p.fieldMeta?.name?.source==='manual')return {ok:false,why:'Ручна назва захищена'};
  if(!d.apply)return {ok:false,why:d.reasons.join('; ')||'Змін немає'};
  ensureFieldMeta(p);p.fieldMeta.name.supplierOriginal??=p.name;
- p.nameHistory=[{name:p.name,at:Date.now()},...(p.nameHistory||[])].slice(0,10);
+ p.nameHistory=[{name:p.name,source:p.fieldMeta.name.source??null,at:Date.now()},...(p.nameHistory||[])].slice(0,10);
  p.name=d.name;p.fieldMeta.name.source='generated';markProduct(p);return {ok:true};
 }
 function nameUndo(p){
  if(!p||p.fieldMeta?.name?.source==='manual'||!p.nameHistory?.length)return {ok:false,why:'Немає попередньої назви'};
- const [last,...rest]=p.nameHistory;p.name=last.name;p.nameHistory=rest;markProduct(p);return {ok:true};
+ const [last,...rest]=p.nameHistory;p.name=last.name;p.nameHistory=rest;
+ // The name source before that apply (history of 5.5 before this field: the supplier's, once nothing is left to undo).
+ ensureFieldMeta(p);if(last.source!==undefined)p.fieldMeta.name.source=last.source??'supplier';else if(!rest.length)p.fieldMeta.name.source='supplier';
+ markProduct(p);return {ok:true};
 }
+// The site title follows an applied name (the import may have left a cleaned supplier title in p.model_name, which wins
+// otherwise); the owner's marketing name still comes first. The product ADDRESS does not move: the slug is built from the
+// title the product would have without the applied name (SITE keeps no redirect from an old product slug; S55-13).
+const finalTitleRaw55=finalTitle;
+finalTitle=function(p){return !p?.marketing_name_uk&&p?.fieldMeta?.name?.source==='generated'&&p.name?finalTitleRaw55({...p,model_name:''}):finalTitleRaw55(p);};
+function finalSlugTitle(p){return p?.fieldMeta?.name?.source==='generated'&&p.fieldMeta.name.supplierOriginal?finalTitleRaw55({...p,name:p.fieldMeta.name.supplierOriginal}):finalTitleRaw55(p);}
 function nameDraftPanel(p){
  const d=nameDraft(p),orig=p.fieldMeta?.name?.supplierOriginal??d.original;
  return `<div class="ce-panel" data-name-panel><b>Назва</b><p class="small">Назва постачальника: ${esc(orig)}</p>${d.apply?`<p class="small">Чернетка: ${esc(d.name)} <span class="muted">(${esc(d.changes.join(', '))})</span></p>`:''}${d.reasons.length?`<p class="small ce-warning">${esc(d.reasons.join('; '))}</p>`:''}<div class="row">${d.apply&&p.fieldMeta?.name?.source!=='manual'?'<button class="btn small" data-act="ceNameApplyOne">Застосувати назву</button>':''}${p.nameHistory?.length?'<button class="btn small" data-act="ceNameUndoOne">Повернути попередню назву</button>':''}</div></div>`;
@@ -393,7 +402,7 @@ function launchReasons(p){
  if(p.waveMark==='never')r.push('Ніколи в хвилі (позначка власника)');
  if(p.fieldMeta?.pub?.source==='manual'&&p.pub===false&&p.waveLaunchHidden!==true)r.push('Товар приховано вручну');
  if(!manual&&!(ceAccepted(p)&&Number(p.contentEngine?.quality)>=60))r.push('Опис не прийнято: потрібен чистий застосований опис (повнота ≥ 60) або ручний');
- const nd=nameDraftMemo(p);if(nd.reasons.length)r.push(...nd.reasons);else if(nd.apply)r.push('Назва: є чиста чернетка — застосуйте її');else if(ceCommercialSignals(p.name,p).length)r.push('Назва: комерційний текст');
+ const nd=nameDraftMemo(p);if(nd.reasons.length)r.push(...nd.reasons);else if(nd.apply)r.push('Назва: є чиста чернетка — застосуйте її');else if(ceCommercialSignals(p.name,p).length||ceCommercialSignals(finalTitle(p),p).length)r.push('Назва: комерційний текст');
  const photos=(p.photos||[]).map(String);if(photos.length<3||new Set(photos).size!==photos.length||photos.some(u=>!/^https:\/\//i.test(u)))r.push('Фото: потрібно щонайменше 3 різні, лише https://');
  if(!realBrand(p))r.push('Немає справжнього бренду');
  // 9: the markup passes the current PIM rules (readyStatus is not used: it checks the old category tree; category, moderation

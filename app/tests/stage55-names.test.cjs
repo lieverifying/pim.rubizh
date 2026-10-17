@@ -41,3 +41,19 @@ test('D-75: apply keeps history and the supplier original; undo restores; a manu
  h.run("S.products.get('p-n').fieldMeta.name.source='manual'");assert.equal(J(h,"nameApply(S.products.get('p-n')).ok"),false);
  assert.match(h.run("nameDraftPanel(S.products.get('p-n'))"),/Назва постачальника/);
 });
+test('D-75: the applied name is the name the site gets, even when the import left a model name; undo returns the earlier title',()=>{
+ // Real data (run11): the import stores a cleaned supplier title in p.model_name; the site title must follow the applied name.
+ const {h}=draft('КУРТКА ТАКТИЧНА M-TAC SOFT SHELL мультикам FX-123');
+ h.run("S.products.get('p-n').model_name='КУРТКА ТАКТИЧНА M-TAC SOFT SHELL мультикам'");
+ assert.equal(h.run("finalTitle(S.products.get('p-n'))"),'КУРТКА ТАКТИЧНА M-TAC SOFT SHELL мультикам');
+ const slug=h.run("productSlug(S.products.get('p-n'))");
+ assert.equal(J(h,"nameApply(S.products.get('p-n')).ok"),true);h.run('bumpData()');
+ assert.equal(h.run("finalTitle(S.products.get('p-n'))"),'Куртка тактична M-Tac Soft Shell мультикам');
+ assert.equal(h.run("productSlug(S.products.get('p-n'))"),slug,'the product address does not move (no redirect on SITE)');
+ assert.equal(J(h,"nameUndo(S.products.get('p-n')).ok"),true);
+ assert.equal(h.run("finalTitle(S.products.get('p-n'))"),'КУРТКА ТАКТИЧНА M-TAC SOFT SHELL мультикам','undo: the import title again');
+ assert.equal(h.run("S.products.get('p-n').fieldMeta.name.source"),'supplier');
+ // The owner's marketing name still wins.
+ h.run("S.products.get('p-n').marketing_name_uk='Куртка Soft Shell для владельца'");assert.equal(J(h,"nameApply(S.products.get('p-n')).ok"),true);
+ assert.equal(h.run("finalTitle(S.products.get('p-n'))"),'Куртка Soft Shell для владельца');
+});
