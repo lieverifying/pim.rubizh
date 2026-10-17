@@ -27,7 +27,7 @@ const batchId='PB-'+wire.catalog_revision+'-'+h.run('fnvHash('+JSON.stringify('s
   const body={...head,version:wire.version,pim_version:wire.pim_version,currency:wire.currency,generated_at:wire.generated_at,catalog_revision:wire.catalog_revision,batch_id:batchId,chunk_index:i,chunk_count:chunks.length,products:chunks[i],hide_ids:[]};
   if(i===0){body.categories=wire.categories;body.category_catalog_hash=wire.category_catalog_hash;body.freshness_policy=freshness;}
   const r=await fetch(siteBase.replace(/\/$/,'')+'/api/pim/sync',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+pimKey},body:JSON.stringify(body)});
-  const t=await r.text();if(!r.ok)throw Error('SITE refused chunk '+i+': '+r.status+' '+t.slice(0,300));
+  const t=await r.text();if(!r.ok){let bad='';try{bad=JSON.stringify((JSON.parse(t).results||[]).filter(x=>x.status!=='valid'));}catch{}throw Error('SITE refused chunk '+i+': '+r.status+' '+t.slice(0,160)+' invalid: '+bad.slice(0,2000));}
  }
  const by=f=>wire.products.reduce((m,p)=>{const k=f(p);m[k]=(m[k]||0)+1;return m;},{});
  const supplier=JSON.parse(h.run('JSON.stringify(Object.fromEntries((S.cfg.suppliers||[]).map(s=>[s.id,s.name])))'));
