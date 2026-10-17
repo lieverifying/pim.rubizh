@@ -24,7 +24,7 @@ const CHUNK=100,chunks=[];for(let i=0;i<wire.products.length;i+=CHUNK)chunks.pus
 const batchId='PB-'+wire.catalog_revision+'-staging55';
 (async()=>{
  for(let i=0;i<chunks.length;i++){
-  const body={...head,pim_version:wire.pim_version,currency:wire.currency,generated_at:wire.generated_at,catalog_revision:wire.catalog_revision,batch_id:batchId,chunk_index:i,chunk_count:chunks.length,products:chunks[i],hide_ids:[]};
+  const body={...head,version:wire.version,pim_version:wire.pim_version,currency:wire.currency,generated_at:wire.generated_at,catalog_revision:wire.catalog_revision,batch_id:batchId,chunk_index:i,chunk_count:chunks.length,products:chunks[i],hide_ids:[]};
   if(i===0){body.categories=wire.categories;body.category_catalog_hash=wire.category_catalog_hash;body.freshness_policy=freshness;}
   const r=await fetch(siteBase.replace(/\/$/,'')+'/api/pim/sync',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+pimKey},body:JSON.stringify(body)});
   const t=await r.text();if(!r.ok)throw Error('SITE refused chunk '+i+': '+r.status+' '+t.slice(0,300));

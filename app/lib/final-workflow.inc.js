@@ -369,7 +369,7 @@ async function finalPublish({allowStale=false}={}){
  const head=Object.fromEntries(Object.keys(PIM_SITE_CONTRACT).filter(k=>k!=='envelope').map(k=>[k,wire[k]]));
  let ack=null;
  for(let i=0;i<chunks.length;i++){
-  const last=i===chunks.length-1,body={...head,pim_version:wire.pim_version,currency:wire.currency,generated_at:wire.generated_at,catalog_revision:wire.catalog_revision,batch_id:batchId,chunk_index:i,chunk_count:chunks.length,products:chunks[i].map(o=>o.p),hide_ids:last?wire.hide_ids:[]};
+  const last=i===chunks.length-1,body={...head,version:wire.version,pim_version:wire.pim_version,currency:wire.currency,generated_at:wire.generated_at,catalog_revision:wire.catalog_revision,batch_id:batchId,chunk_index:i,chunk_count:chunks.length,products:chunks[i].map(o=>o.p),hide_ids:last?wire.hide_ids:[]};
   if(i===0){body.categories=wire.categories;body.category_catalog_hash=wire.category_catalog_hash;body.freshness_policy=freshness;}
   const j=await finalSiteFetch('/pim/sync',{method:'POST',body:JSON.stringify(body)});
   if(j.batch_id!==batchId||j.chunk_index!==i)throw Error('Сайт не подтвердил часть пакета '+(i+1)+'/'+chunks.length);

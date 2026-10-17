@@ -113,6 +113,15 @@ test('publisher sends the exact wire, records only acknowledged models and is id
  assert.deepEqual(Object.keys(await h.run('Store.get("site/v3/hashes")')),['p-a']);
  const again=await h.run('sitePublish("delta")');assert.equal(again.nothing,true);assert.equal(calls.filter(c=>c.url.endsWith('/pim/sync')).length,1);
 });
+// Stage 5.5 (S55-03): SITE refuses a chunk unless its header carries every version of SITE shop/pim-v3-sync.php
+// PIM_V3_CONTRACT — including the envelope version. The publisher left `version` out (the mock site did not check it), so the
+// first real publish would have been refused with 409 UNSUPPORTED_VERSION:version.
+const SITE_V3_CONTRACT={contract_version:3,version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1};
+test('stage 5.5: every chunk header carries every version SITE checks (contract v3 envelope)',async()=>{
+ const h=setup({production:true}),calls=mockSite(h);await h.run('sitePublish("delta")');
+ const sync=calls.filter(c=>c.url.endsWith('/pim/sync'));assert.ok(sync.length>=1);
+ for(const c of sync)for(const [k,v] of Object.entries(SITE_V3_CONTRACT))assert.equal(c.body[k],v,'chunk '+c.body.chunk_index+': '+k);
+});
 test('stage 5.1: the owner freshness policy travels in chunk 0; a SITE that does not apply it gets nothing; a policy change alone is published',async()=>{
  const old=setup({production:true}),oldCalls=mockSite(old,{freshness:false});
  await assert.rejects(old.run('sitePublish("delta")'),/freshness_policy v1/);assert.ok(oldCalls.every(c=>!c.url.endsWith('/pim/sync')),'nothing sent to a SITE without the rule');
