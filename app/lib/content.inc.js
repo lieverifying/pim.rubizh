@@ -228,7 +228,7 @@ const ceList55=ceList;ceList=function(){
  const need=f.slice(5);CE_UI.filter='all';try{return ceList55().filter(p=>!ceAccepted(p)&&ceNeedReason(p)===need);}finally{CE_UI.filter=f;}
 };
 const vContentEngine55=vContentEngine;vContentEngine=function(){
- const counts=ceNeedCounts(),last=S.cfg.ceLastClean?.ids?.length||0;
+ const counts=ceNeedCounts(),last=(S.cfg.ceLastClean?.ids?.length||0)+(S.cfg.ceLastClean?.names?.length||0);
  return `<div class="panel" data-ce-need><h2>Потребують рішення</h2><p class="small muted">Описи, які не пройшли автоматичну перевірку, лишаються чернетками; на сайті — базовий опис із характеристик.</p><div class="row" role="group" aria-label="Причини">${Object.entries(CE_NEED_LABELS).map(([k,l])=>`<button class="btn small" data-act="ceNeedFilter" data-need="${k}" aria-pressed="${CE_UI.filter==='need:'+k}">${esc(l)} · ${counts[k]}</button>`).join('')}${String(CE_UI.filter).startsWith('need:')?'<button class="btn small" data-act="ceNeedFilter" data-need="">Усі</button>':''}</div>
  <div class="row" style="margin-top:10px"><button class="btn primary" data-act="ceApplyClean" ${CE_UI.busy?'disabled':''}>Застосувати всі чисті описи</button>${last?`<button class="btn" data-act="ceUndoClean" ${CE_UI.busy?'disabled':''}>Скасувати останнє застосування (${last})</button>`:''}</div></div>`+vContentEngine55();
 };
@@ -239,16 +239,19 @@ async function ceApplyClean(){
   let n=0;for(const p of S.products.values()){if(p.archived||p.fieldMeta?.desc?.source==='manual'||(ceAccepted(p)&&p.contentEngine?.inputFingerprint===ceFingerprint(p)))continue;
    p.contentDraft=ceChoose(p,index);markProduct(p,true);if(!ceAutoApplyReasons(p).length)ready.push(p);if(++n%25===0)await new Promise(r=>setTimeout(r,0));}
  }finally{CE_UI.busy=false;}
- if(!ready.length){toast('Чистих описів для застосування немає');render();return;}
- if(!confirm(`Застосувати ${ready.length} чистих описів? Ручні описи не зміняться. Кожен поточний опис збережено — дію можна скасувати.`)){render();return;}
+ // Stage 5.5 (D-75): clean name drafts go with the same button (history and undo of their own).
+ const names=[...S.products.values()].filter(p=>!p.archived&&p.fieldMeta?.name?.source!=='manual'&&nameDraft(p).apply);
+ if(!ready.length&&!names.length){toast('Чистих описів і назв для застосування немає');render();return;}
+ if(!confirm(`Застосувати ${ready.length} чистих описів і ${names.length} чистих назв? Ручні описи й назви не зміняться. Попередні збережено — дію можна скасувати.`)){render();return;}
  try{const backup=await createAutoBackup('Перед застосуванням чистих описів',{force:true});if(!backup)await Store.set('contentengine/before_apply',backupData('Перед застосуванням чистих описів'));}catch(e){toast('Резервну копію не створено. Описи не змінено.');return;}
  const ids=[];for(const p of ready){if(ceApply(p).ok){ids.push(p.id);index.add(p,p.desc);}}
- S.cfg.ceLastClean={at:Date.now(),ids};S.cfgDirty=true;bumpData();await persist();toast('Застосовано чистих описів: '+ids.length);render();
+ const nameIds=[];for(const p of names)if(nameApply(p).ok)nameIds.push(p.id);
+ S.cfg.ceLastClean={at:Date.now(),ids,names:nameIds};S.cfgDirty=true;bumpData();await persist();toast('Застосовано чистих описів: '+ids.length);render();
 }
 async function ceUndoClean(){
- const ids=S.cfg.ceLastClean?.ids||[];if(!ids.length)return;
- if(!confirm(`Повернути попередні описи для ${ids.length} товарів?`))return;
- let n=0;for(const id of ids){const p=S.products.get(id);if(p&&ceUndo(p).ok)n++;}
+ const ids=S.cfg.ceLastClean?.ids||[],nameIds=S.cfg.ceLastClean?.names||[];if(!ids.length&&!nameIds.length)return;
+ if(!confirm(`Повернути попередні описи (${ids.length}) і назви (${nameIds.length})?`))return;
+ let n=0;for(const id of ids){const p=S.products.get(id);if(p&&ceUndo(p).ok)n++;}for(const id of nameIds){const p=S.products.get(id);if(p)nameUndo(p);}
  S.cfg.ceLastClean=null;S.cfgDirty=true;bumpData();await persist();toast('Повернуто описів: '+n);render();
 }
 const ceAction55=ceAction;ceAction=async function(a,t){
@@ -282,3 +285,71 @@ function supplierTextChecks(p){
  return rows;
 }
 const supplierTextChecksMemo=memoProd('supplierTextChecks55',supplierTextChecks);
+
+// Stage 5.5 (owner D-75): literate product names — a draft with history and undo, like descriptions. Scheme «<тип> <бренд>
+// <модель> <ключова характеристика>»; the word order of the supplier is kept (the name is cleaned, not rewritten).
+const NAME_ABBR=new Set(['MOLLE','YKK','ЗСУ','НАТО','NATO','ДСТУ','STANAG','ДСНС','НГУ','СБУ','МВС','ТРО','LED','USB','UV','IR','GPS','PE','UHMWPE','EVA','PVC','TPU','IFAK','CAT','SOF','FAST','MICH','ACH','PASGT','QRS','GEN','II','III','IV','NIJ','EDC','AK','АК','РПС','РПК','ВОГ','БК','СВД','ПМ','АКМ','IP','XL','XXL','XXXL','XS','RAL','MK']);
+const NAME_PROMO=/(?<![\p{L}])(?:новинка|новинки|хіт|хит|акція|акция|розпродаж|распродажа|sale|new|hit)(?![\p{L}])/giu;
+const NAME_TYPE_WORDS=/(?:куртк|штан|костюм|кофт|фліс|футболк|сороч|поло|шорт|жилет|худі|светр|термобіл|кепк|шапк|балаклав|бафф|рукавиц|рукавич|берц|черевик|кросівк|чоботи|взутт|рюкзак|сумк|баул|підсум|рпс|розвантаж|плитоноск|бронежилет|бронепластин|бронеплит|плит|пакет|напашник|шолом|кавер|навушник|окуляр|маск|сітк|намет|спальн|каремат|килим|ремін|пояс|ліхтар|ніж|мультитул|турнікет|аптечк|бандаж|кобур|чохол|павербанк|станці|бінокл|приціл|казанок|фляг|термос|пончо|дощовик|бахіл|гамаш|наколінник|налокітник|комплект|набір|анорак|фартух|горжет|захист|гідратор|магазин|антен|адаптер|кріпленн|шеврон|патч|нашивк|карабін|ковдр|спальник|бронекомплект|тримач|підставк|кейс|сітк|чохл|вкладиш|устілк|шнурк|пряжк|стропа|мотузк|ліхтарик)/iu;
+// The product type also comes from the category leaf: a 4–5 letter stem of its words in the name.
+function nameHasType(name,category){if(NAME_TYPE_WORDS.test(name))return true;const leaf=String(category||'').split(' / ').pop()||'';const words=leaf.toLowerCase().match(/\p{L}{4,}/gu)||[];const n=String(name).toLowerCase();return words.some(w=>n.includes(w.slice(0,w.length>=6?5:4)));}
+function nameCaseWord(w,brandWords){
+ const core=w.replace(/^[«"“(]+|[»"”),.;:!?]+$/gu,'');if(!core)return w;
+ if(brandWords.has(core.toLowerCase()))return w.replace(core,brandWords.get(core.toLowerCase()));
+ if(/\d/.test(core)||/^[A-Z]+\.[A-Z.]+$/.test(core))return w;
+ const up=core===core.toUpperCase()&&core!==core.toLowerCase();if(!up)return w;
+ if(NAME_ABBR.has(core.toUpperCase()))return w;
+ if(/^\p{Script=Cyrillic}+$/u.test(core)&&core.length<=3)return w;
+ if(/^[A-Z]{1,3}$/.test(core))return w;
+ const low=core.toLowerCase();return w.replace(core,/^[A-Za-z]/.test(core)?core.charAt(0)+low.slice(1):low);
+}
+function nameDraft(p){
+ const original=String(p?.name||''),changes=[],reasons=[];let x=original;
+ const step=(label,next)=>{if(next!==x){changes.push(label);x=next;}};
+ step('емодзі',x.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu,' '));
+ step('знаки «!!!»',x.replace(/!{2,}|!(?=\s|$)/g,' '));
+ step('рекламні слова',x.replace(NAME_PROMO,' '));
+ const codes=uniq((p?.variants||[]).flatMap(v=>Object.values(v.offers||{}).map(o=>String(o?.s||'').trim())).filter(c=>c.length>=3));
+ // The supplier code goes only where it is clearly the supplier's: in brackets, after «арт./код», digits only, or at the very end
+ // not right after the brand (a manufacturer model code such as «VIDEX VLF-H035C» stays).
+ for(const c of codes){const e=escRe(c),bracket=new RegExp('[(\\[]\\s*(?:арт\\.?|артикул|код|art\\.?|sku)?\\s*:?\\s*'+e+'\\s*[)\\]]','giu'),labelled=new RegExp('(?:арт\\.?|артикул|код|art\\.?|sku)\\s*:?\\s*'+e+'(?![\\p{L}\\d-])','giu'),bare=new RegExp('(?<![\\p{L}\\d-])'+e+'(?![\\p{L}\\d-])','giu');
+  let next=x.replace(bracket,' ').replace(labelled,' ');if(/^\d{4,}$/.test(c))next=next.replace(bare,' ');
+  else{const t=next.trim(),bq=realBrand(p);if(new RegExp(e+'[\\s!.]*$','iu').test(t)&&!(bq&&new RegExp(escRe(bq)+'\\s+'+e+'[\\s!.]*$','iu').test(t)))next=t.replace(new RegExp('\\s*'+e+'[\\s!.]*$','iu'),'');}
+  step('код постачальника '+c,next);}
+ step('ціна в назві',ceCutG1(x,[]));
+ for(const re of CE_G4)step('контакт або посилання',x.replace(re,' '));
+ {const re=ceSupplierNameRegex(p);if(re)step('назва постачальника замість бренду',x.replace(re,' '));}
+ step('повтор слів',x.replace(/(?<![\p{L}])(\p{L}{3,})(\s+\1)+(?![\p{L}])/giu,'$1'));
+ const brand=realBrand(p),brandWords=new Map(brand?brand.split(/\s+/).map(b=>[b.toLowerCase(),b]):[]);
+ if(brand)brandWords.set(brand.toLowerCase(),brand);
+ // CAPS only in a «shouting» name (at least half of the words in capitals); otherwise capitals are deliberate abbreviations
+ // («НВМПЕ», «VLF-H035C») and only the brand is written as p.brand.
+ const long=x.match(/[\p{L}]{3,}/gu)||[],shouting=long.length&&long.filter(w=>w===w.toUpperCase()).length*2>=long.length;
+ step('регістр',x.split(/(\s+)/).map(w=>/\s/.test(w)?w:shouting?nameCaseWord(w,brandWords):(brandWords.get(w.replace(/[^\p{L}\d-]/gu,'').toLowerCase())?w.replace(w.replace(/[^\p{L}\d-]/gu,''),brandWords.get(w.replace(/[^\p{L}\d-]/gu,'').toLowerCase())):w)).join(''));
+ step('пробіли',ceTidy(x.replace(/\s{2,}/g,' '),''));
+ if(x)step('велика літера на початку',x.charAt(0).toUpperCase()+x.slice(1));
+ const hasBrand=!!brand&&x.toLowerCase().includes(brand.toLowerCase()),hasType=nameHasType(x,p?.category);
+ if(!hasBrand||!hasType)return {name:original,original,changes:[],reasons:['Назва: немає типу товару/бренду'],apply:false};
+ if(x.length<20||x.length>120)reasons.push('Назва: довжина '+x.length+' (потрібно 20–120)');
+ return {name:x,original,changes,reasons,apply:!reasons.length&&x!==original};
+}
+function nameApply(p,d=nameDraft(p)){
+ if(!p||p.fieldMeta?.name?.source==='manual')return {ok:false,why:'Ручна назва захищена'};
+ if(!d.apply)return {ok:false,why:d.reasons.join('; ')||'Змін немає'};
+ ensureFieldMeta(p);p.fieldMeta.name.supplierOriginal??=p.name;
+ p.nameHistory=[{name:p.name,at:Date.now()},...(p.nameHistory||[])].slice(0,10);
+ p.name=d.name;p.fieldMeta.name.source='generated';markProduct(p);return {ok:true};
+}
+function nameUndo(p){
+ if(!p||p.fieldMeta?.name?.source==='manual'||!p.nameHistory?.length)return {ok:false,why:'Немає попередньої назви'};
+ const [last,...rest]=p.nameHistory;p.name=last.name;p.nameHistory=rest;markProduct(p);return {ok:true};
+}
+function nameDraftPanel(p){
+ const d=nameDraft(p),orig=p.fieldMeta?.name?.supplierOriginal??d.original;
+ return `<div class="ce-panel" data-name-panel><b>Назва</b><p class="small">Назва постачальника: ${esc(orig)}</p>${d.apply?`<p class="small">Чернетка: ${esc(d.name)} <span class="muted">(${esc(d.changes.join(', '))})</span></p>`:''}${d.reasons.length?`<p class="small ce-warning">${esc(d.reasons.join('; '))}</p>`:''}<div class="row">${d.apply&&p.fieldMeta?.name?.source!=='manual'?'<button class="btn small" data-act="ceNameApplyOne">Застосувати назву</button>':''}${p.nameHistory?.length?'<button class="btn small" data-act="ceNameUndoOne">Повернути попередню назву</button>':''}</div></div>`;
+}
+const ceProductPanel55=ceProductPanel;ceProductPanel=function(p){return nameDraftPanel(p)+ceProductPanel55(p);};
+const ceAction55n=ceAction;ceAction=async function(a,t){
+ if(a==='ceNameApplyOne'||a==='ceNameUndoOne'){const p=S.edit;if(!p)return;const r=a==='ceNameApplyOne'?nameApply(p):nameUndo(p);toast(r.ok?'Назву оновлено':r.why);if(r.ok)await persist();render();return;}
+ return ceAction55n(a,t);
+};
