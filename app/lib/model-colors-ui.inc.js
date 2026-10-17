@@ -90,11 +90,14 @@ function mcSpecificName(name,brand=''){
 // Active cards per supplier group code (supplier id + code): built once per data version.
 const mcCodeOwners=memoByData(function(){const m=new Map();for(const p of S.products.values()){if(p.archived||p.merged_into)continue;const sids=uniq((p.variants||[]).flatMap(v=>Object.keys(v.offers||{})));for(const c of mcIdentity(p).codes)for(const sid of sids){const k=sid+'\u0000'+c;if(!m.has(k))m.set(k,new Set());m.get(k).add(p.id);}}return m;});
 function mcColourSliceRule(products,id){
+ // Stage 5.4.1 (owner): per-m² cards of one kind are one QUOTE model with a colour choice — all cards per-m², never a
+ // mix with fixed-price cards; the name may be generic (the price is a manager quote), every other proof still holds.
+ const unit=products.map(p=>(p.variants||[]).length>0&&(p.variants||[]).every(finalUnitPriced)),quote=unit.every(Boolean);
+ if(!quote&&products.some(p=>(p.variants||[]).some(finalUnitPriced)))return null;
  // One supplier only (codes and categories are that supplier's), a specific name without the brand.
- if(id.suppliers.length!==1||!mcSpecificName(id.name,products[0].brand||''))return null;
+ if(id.suppliers.length!==1||!quote&&!mcSpecificName(id.name,products[0].brand||''))return null;
  // Every card is exactly one real colour (a colourless card is not a colour slice), no colour repeats.
  const colours=products.map(p=>mcColors(p));if(products.length<2||colours.some(c=>c.length!==1||!c[0].key.replace(/\|/gu,''))||new Set(colours.map(c=>c[0].key)).size!==products.length)return null;
- if(products.some(p=>(p.variants||[]).some(finalUnitPriced)))return null;
  const stems=mcColourStems(products),text=p=>ceSourcePlain(simpleSource(p)),first=text(products[0]);if(norm(first).length<200)return null;
  if(!products.every(p=>mcSameExceptColours(text(p),first,stems)))return null;
  const rcat=p=>uniq((p.variants||[]).flatMap(v=>Object.values(v.offers||{}).map(o=>String(o.supplier_category_raw??o.rcat??'')))).join(' | ');
@@ -102,10 +105,12 @@ function mcColourSliceRule(products,id){
  const codes=products.map(p=>mcIdentity(p).codes);
  if(codes.every(c=>c.length===1)&&new Set(codes.map(c=>c[0])).size===products.length){
   const ids=new Set(products.map(p=>p.id)),owners=mcCodeOwners();
-  for(const c of codes)for(const sid of id.suppliers)for(const other of owners.get(sid+'\u0000'+c[0])||[])if(!ids.has(other))return null;
-  return 'colour-slices-supplier-codes';
+  // A code shared with cards outside the group is the supplier's own model — except, for per-m² cards, that colour's
+  // fixed sizes (M-WIN: one code per colour with its sizes; the per-m² card is not one of those sizes).
+  for(const c of codes)for(const sid of id.suppliers)for(const other of owners.get(sid+'\u0000'+c[0])||[])if(!ids.has(other)&&!(quote&&!(S.products.get(other)?.variants||[]).some(finalUnitPriced)))return null;
+  return quote?'colour-slices-quote':'colour-slices-supplier-codes';
  }
- if(codes.every(c=>!c.length))return 'colour-slices-specific-name';
+ if(codes.every(c=>!c.length))return quote?'colour-slices-quote':'colour-slices-specific-name';
  return null;
 }
 function mcGroup(products,id,{sliceRule=false}={}){
@@ -123,6 +128,9 @@ const mcPlan=memoByData(function(){
    // One supplier group code = one colour of one model (M-WIN nets: one group per colour, W×H sizes inside): its size
    // cards form that colour's model on their own. Per-m² cards never join a fixed-price model; the colour stays in the name.
    const byCode=new Map();for(const p of products){if(used.has(p.id)||(p.variants||[]).some(finalUnitPriced))continue;const c=mcIdentity(p).codes;if(c.length!==1)continue;if(!byCode.has(c[0]))byCode.set(c[0],[]);byCode.get(c[0]).push(p);}
+   // Stage 5.4.1: the per-m² cards of a bucket that also holds fixed sizes are judged on their own (one QUOTE model).
+   const unitCards=products.filter(p=>!used.has(p.id)&&(p.variants||[]).length>0&&(p.variants||[]).every(finalUnitPriced));
+   if(unitCards.length>=2&&unitCards.length<products.length){const sub=mcGroup(unitCards,{...mcIdentity(unitCards[0]),key:mcIdentity(unitCards[0]).key+'|quote'},{sliceRule:true});if(sub.automatic)groups.push(sub);}
    for(const [code,part] of byCode){if(part.length<2||byCode.size<2&&part.length===products.length)continue;const titles=uniq(part.map(p=>norm(mcStripOwnSize(String(p.model_name||p.name||''),p).replace(/[()]/g,' '))));if(titles.length!==1)continue;
     const base=mcIdentity(part[0]),colours=uniq(part.flatMap(p=>mcColors(p).map(c=>c.camouflage||c.color).filter(Boolean)));let title=mcStripOwnSize(String(part[0].model_name||part[0].name||''),part[0]).replace(/[()]/g,' ').replace(/\s+/g,' ').trim();
     // The supplier's structured colour names a single-colour model when its title does not (one card per colour otherwise shares a title).

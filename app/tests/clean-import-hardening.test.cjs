@@ -237,18 +237,21 @@ test('import path: M-WIN net rows of one supplier group become one model with W�
  const net=models.find(m=>m.v.length===2);assert.ok(net,JSON.stringify(models));assert.deepEqual(net.v.map(x=>x[2]).sort(),['2×3 м','3×4 м']);
  assert.equal(models.filter(m=>m.v.length===1).length,1,'the per-m² row is its own card');assert.equal(h.run('[...S.products.values()].reduce((n,p)=>n+p.variants.length,0)'),3,'no SKU invented');
 });
-test('one supplier group per colour (M-WIN antidrone nets): each colour\'s size cards become that colour\'s model; per-m² cards stay out; colour stays in the title',()=>{
+// Stage 5.4.1 (owner): the per-m² cards (one per colour) now form ONE QUOTE model with a colour choice; they still never join a
+// colour's fixed-size model.
+test('one supplier group per colour (M-WIN antidrone nets): each colour\'s size cards become that colour\'s model; per-m² cards stay out of them and form one quote model; colour stays in the title',()=>{
  const h=mwinSetup(),T='Антидронова маскувальна сітка M-WIN';let n=0;
  const card=(colour,code,sel)=>{const id='a'+(++n),name=T+' '+colour+(/х/.test(sel)?' '+sel+' м (площа '+sel.split('х').reduce((a,b)=>a*b,1)+' кв.м.)':' індивідуального розміру (ціна за 1 кв.м.)');
   const p=net(h,id,name,'AD-'+code+'-'+n,sel,{source_model:code});h.ctx.pid=id;h.run(`S.products.get(pid).variants[0].camouflage=${JSON.stringify(colour)};classificationApplyProduct(S.products.get(pid))`);return id;};
  const px=[card('Піксель','80469','2х6'),card('Піксель','80469','3х4'),card('Піксель','80469','Індивідуальний розмір')];
  const mc=[card('Мультикам','5469','2х6'),card('Мультикам','5469','3х4'),card('Мультикам','5469','Індивідуальний розмір')];
  h.run('bumpData()');const plan=JSON.parse(h.run('JSON.stringify(mcPlan())'));
- const auto=plan.automatic.map(g=>({ids:g.ids,name:g.name}));
+ const quote=plan.automatic.filter(g=>g.rule==='colour-slices-quote'),auto=plan.automatic.filter(g=>g.rule!=='colour-slices-quote').map(g=>({ids:g.ids,name:g.name}));
+ assert.deepEqual(quote.map(g=>g.ids),[[px[2],mc[2]].sort()],'the two per-m² cards: one quote model');
  assert.deepEqual(auto.map(g=>g.ids).sort(),[px.slice(0,2).sort(),mc.slice(0,2).sort()].sort(),JSON.stringify(plan.groups.map(g=>[g.ids,g.automatic,g.reasons])));
  assert.ok(auto.some(g=>/Піксель/.test(g.name))&&auto.some(g=>/Мультикам/.test(g.name)),JSON.stringify(auto));
  assert.ok(auto.every(g=>!/\d×\d|\dх\d|площа/.test(g.name)),'own sizes are not in the model name');
  h.run(`for(const id of ${JSON.stringify([...px,...mc])})S.products.get(id).name=S.products.get(id).name.replace(/ (Піксель|Мультикам)/,'')`);h.run('bumpData()');
- const named=JSON.parse(h.run('JSON.stringify(mcPlan().automatic.map(g=>g.name))'));assert.equal(named.length,2);assert.ok(named.some(n=>/Піксель$/.test(n))&&named.some(n=>/Мультикам$/.test(n)),'structured colour completes a title without it: '+named);
- h.run('mcMigrate()');assert.deepEqual(quoteSku(h,px[2]).map(v=>[v.sale_mode,v.order,v.pay]),[['QUOTE',false,false]],'the per-m² card stays apart and is a quote only');
+ const named=JSON.parse(h.run('JSON.stringify(mcPlan().automatic.filter(g=>g.rule!=="colour-slices-quote").map(g=>g.name))'));assert.equal(named.length,2);assert.ok(named.some(n=>/Піксель$/.test(n))&&named.some(n=>/Мультикам$/.test(n)),'structured colour completes a title without it: '+named);
+ h.run('mcMigrate()');assert.deepEqual(quoteSku(h,px[2]).map(v=>[v.sale_mode,v.order,v.pay]),[['QUOTE',false,false],['QUOTE',false,false]],'one quote model: a per-m² SKU per colour, never orderable or payable');
 });

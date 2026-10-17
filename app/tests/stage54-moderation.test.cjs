@@ -93,8 +93,8 @@ test('grouping rule: cards that must NOT be joined stay an owner question',()=>{
  // 6. two cards share one supplier code, a third has another: the colour-slice rule does not apply
  const g=slices();g.run('for(const v of S.products.get("p-2").variants)v.offers["supplier-a"].source_model="1000";markProduct(S.products.get("p-2"))');const pg=plan(g);
  assert.ok(pg.automatic.every(x=>x.rule==='supplier-model-code'&&!x.ids.includes('p-1')),'only the shared-code pair (existing rule), never the third card');
- // 7. per-m² cards (made-to-measure) never join
- assert.equal(plan(slices({name:'Маскувальна сітка Fixture індивідуального розміру'})).automatic.length,0);
+ // 7. a per-m² card never joins a fixed-price model (stage 5.4.1: per-m² cards of one kind join each other — see below)
+ {const h=slices({name:'Маскувальна сітка Fixture 3х4 м'});h.run('S.products.get("p-1").variants.forEach(v=>v.offers["supplier-a"].source_name="Маскувальна сітка Fixture індивідуального розміру (ціна за 1 кв.м.)");markProduct(S.products.get("p-1"))');assert.ok(plan(h).automatic.every(g=>!g.ids.includes('p-1')),'a mix of per-m² and fixed-price cards');}
  // 8. the same colour twice (shared cells) — the existing blocker
  assert.equal(plan(slices({colors:['Койот','Койот','Олива']})).automatic.length,0);
  // 9. different attributes (the existing blocker)
@@ -132,17 +132,16 @@ test('sizes from the description: a «Розмірна сітка» table of thi
  // An explicit «Розміри: 36-46» wins over the maker's size table 35–46 (the table only explains lengths).
  r=opts('Розміри 36-46. '+table.replace('40р. - 26','35р. - 22,5 см.\n36р. - 23,5 см.\n37р. - 24,5 см.\n38р. - 25 см.\n39р. - 25,5 см.\n40р. - 26'),'shoes');assert.equal(r.tier,'SAFE_AUTO');assert.deepEqual(r.sizes,['36,37,38,39,40,41,42,43,44,45,46']);
 });
-test('UKR-TEC decision: a supplier set to take sizes from the description sends a sized product without sizes to moderation',()=>{
+test('UKR-TEC decision (5.4.1): a sized product without a found size is sold as in 5.2 — a request with size confirmation, not moderation',()=>{
  const h=createHarness();h.run('S.cfg.category_engine={version:1,migration_validated:true};S.cfg.simple_mode_version=1;classificationEnable();');
  const p=h.product({id:'p-pants',name:'Штани тактичні Fixture',canonical_category_id:'clothing_pants',last_confirmed_category_id:'clothing_pants',primary_product_type:'pants',desc:'<p>Тактичні штани. Матеріал: ріп-стоп. Склад: 65% поліестер, 35% бавовна. Кишені на липучках.</p>'});h.add(p);
  h.run('classificationApplyProduct(S.products.get("p-pants"));bumpData()');
  const reasons=()=>h.run('finalDecision(S.products.get("p-pants")).reasons.map(r=>r.code)');
- assert.ok(!reasons().includes('size'),'other suppliers: unchanged (size request without payment, no moderation)');
- h.run('S.cfg.suppliers[0].sizes_from_description=true;bumpData()');assert.ok(reasons().includes('size'),'«розмір уточнюється» and moderation');
- // Sizes in the supplier's description: the model's sizes are found → no size moderation (sizes chosen, manager confirms).
- h.run('var q=S.products.get("p-pants");q.desc=q.variants[0].offers["supplier-a"].source_description="<p>Тактичні штани. Матеріал: ріп-стоп. Склад: 65% поліестер, 35% бавовна. Розміри: 42-60рр.</p>";markProduct(q);classificationApplyProduct(q);bumpData()');
- assert.ok(!reasons().includes('size'));
- assert.equal(h.run('sanitizePortableConfig(S.cfg).suppliers[0].sizes_from_description'),true);
+ // Even with the old 5.4 supplier flag still in a backup: no size moderation; ordering by request, no payment before the manager.
+ h.run('S.cfg.suppliers[0].sizes_from_description=true;bumpData()');assert.ok(!reasons().includes('size'),'not an owner question');
+ const v=JSON.parse(h.run('JSON.stringify(classificationAvailability(S.products.get("p-pants"),S.products.get("p-pants").variants[0]))'));
+ assert.equal(v.payment_allowed,false);assert.equal(v.order_submission_allowed,true);assert.equal(v.requires_order_confirmation,true);
+ assert.doesNotMatch(h.run('workflowSourcePanel(S.cfg.suppliers[0])'),/data-source-sizes-description/,'the 5.4 setting is gone from the screen');
 });
 
 // ── Task 4: per-m² goods → QUOTE on the site (no cart, no MonoPay), only to a SITE that applies it. ──
@@ -214,4 +213,25 @@ test('M-WIN decision: the same file downloaded again does not move the data time
  assert.match(h.run('sourceFileTimeNote(sourceTimeForSupplier('+JSON.stringify(parsed.source_time)+',S.cfg.suppliers[0],S.cfg.suppliers[0].source_time_last.hash))'),/Файл не змінився/);
  // A changed file moves it.
  await importFile(h,body.replace('<stock>3</stock>','<stock>4</stock>'),'feed.xml',{lastModified:now-H});o=offer(h);assert.equal(o.source_generated_at,now-H);
+});
+
+// ── Stage 5.4.1 (owner): per-m² nets of one kind in different colours are ONE model with a colour choice (still QUOTE). ──
+test('per-m² cards of one kind in different colours join as one QUOTE model; never with a fixed-price card',()=>{
+ const name='Маскувальна сітка Fixture індивідуального розміру (ціна за 1 кв.м.)';
+ const h=slices({name,colors:['Піксель','Мультикам','Хижак'],rcat:c=>'Маскувальні сітки '+c});const p=plan(h);
+ assert.equal(p.automatic.length,1);assert.equal(p.automatic[0].rule,'colour-slices-quote');h.run('mcMigrate()');
+ const m=JSON.parse(h.run('JSON.stringify(finalWireProduct([...S.products.values()].find(p=>!p.archived)))'));
+ assert.equal(m.colors.length,3);assert.ok(m.variants.every(v=>v.sale_mode==='QUOTE'&&v.price_unit==='m2'&&v.order_submission_allowed===false&&v.payment_allowed===false));
+ // A generic per-m² name still needs the rest of the evidence: a differing non-colour word keeps them apart.
+ assert.equal(plan(slices({name,desc:(c,i)=>BODY.repeat(2)+'Клас '+(i+1)+'.'})).automatic.length,0);
+});
+test('per-m² cards whose supplier code also groups that colour\'s fixed sizes (M-WIN) join across colours; the fixed sizes stay their colour\'s model',()=>{
+ const h=createHarness();h.run('S.cfg.category_engine={version:1,migration_validated:true};S.cfg.simple_mode_version=1;S.cfg.model_colors_version=1;');
+ const T='Антидронова сітка Fixture',desc='<p>'+BODY.repeat(2)+'</p>';let n=0;
+ const card=(colour,code,size)=>{const id='a'+(++n),name=T+' '+colour+(size?' '+size+' м':' індивідуального розміру (ціна за 1 кв.м.)');const p=h.product({id,name,brand:'',canonical_category_id:'camouflage_nets',last_confirmed_category_id:'camouflage_nets',created:n,photos:['https://images.test/'+id+'.jpg'],desc,attrs:{}});
+  p.variants=[{sku:'RUB-'+id,camouflage:colour,color:colour,size:size?size.replace('х','×')+' м':'',offers:{'supplier-a':{s:'FX-'+id,source_model:code,source_name:name,supplier_category_raw:'Сітки',cost:100,payout:100,stock:2,availability:'in',at:Date.now(),photos:p.photos}}}];h.add(p);return id;};
+ const px=[card('Піксель','801','2х6'),card('Піксель','801','3х4'),card('Піксель','801','')],mc=[card('Мультикам','802','2х6'),card('Мультикам','802','3х4'),card('Мультикам','802','')];
+ h.run('bumpData()');const p=plan(h);const quote=p.automatic.find(g=>g.rule==='colour-slices-quote');
+ assert.ok(quote,JSON.stringify(p.groups.map(g=>[g.ids,g.automatic,g.rule,g.reasons])));assert.deepEqual([...quote.ids],[px[2],mc[2]].sort());
+ assert.ok(p.automatic.every(g=>g===quote||!g.ids.some(id=>[px[2],mc[2]].includes(id))),'never with the fixed sizes');
 });

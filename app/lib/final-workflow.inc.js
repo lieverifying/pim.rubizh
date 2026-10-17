@@ -135,11 +135,8 @@ const finalDecision=memoProd('final-decision',function(p){
  const openCategory=(p.classification_exceptions||[]).some(e=>e.kind==='category'&&e.status==='OPEN');
  if(!p.canonical_category_id||openCategory)add(moderate,'category',FINAL_MODERATION_TEXT.category[1],[p.category_review_status||'NEEDS_REVIEW',p.suggested_category_id?'Предложено: '+canonicalPath(p.suggested_category_id):''].filter(Boolean));
  if(variants.length>modelLimit(p)||finalModelReview().has(p.id))add(moderate,'grouping',FINAL_MODERATION_TEXT.grouping[1],[variants.length+' SKU']);
- // Stage 5.4 (owner decision on UKR-TEC): a supplier set to take sizes from the description and characteristics
- // (supplier.sizes_from_description) has no size column; a sized product of it for which neither its SKU size nor the
- // model's sizes were found stays «розмір уточнюється» and goes to the owner (other suppliers: unchanged).
- const sizeSuppliers=new Set((S.cfg.suppliers||[]).filter(s=>s.sizes_from_description===true).map(s=>s.id));
- if(sizeSuppliers.size){const missing=variants.filter(v=>Object.keys(v.offers||{}).some(id=>sizeSuppliers.has(id))&&v.size_status!=='NO_SIZE_REQUIRED'&&v.size_confidence_tier!=='SAFE_AUTO');if(missing.length)add(moderate,'size',FINAL_MODERATION_TEXT.size[1],missing.slice(0,5).map(v=>v.sku));}
+ // Stage 5.4.1 (owner): a sized SKU without a found size is sold as in 5.2 — a request, the manager confirms the size
+ // (classificationAvailability: SIZE_CONFIRMATION_REQUIRED, no payment); it is not an owner question.
  const unknownColors=uniq(variants.flatMap(v=>simplePalette(v).unknown));if(unknownColors.length)add(moderate,'color',FINAL_MODERATION_TEXT.color[1],unknownColors.slice(0,5));
  if(classificationEnabled()||mcEnabled()){const colors=finalUsableColors(p,mcColors(p));if(colors.length>1&&colors.some(c=>!c.photos.length))add(moderate,'photo_ownership',FINAL_MODERATION_TEXT.photo_ownership[1],colors.filter(c=>!c.photos.length).map(c=>[c.color,c.camouflage].filter(Boolean).join(' / ')||c.id));}
  // Stage 5.4 (owner decision): a per-m² SKU is no longer an owner question — it is published as a manager QUOTE (no cart,
