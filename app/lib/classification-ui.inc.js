@@ -191,9 +191,9 @@ function classificationPermissions(availability){
 // time goes to SITE in the wire field stock_imported_at (legacy name kept: SITE reads it as the fallback data time).
 // No time at all → no age → sold only after the manager confirms (fail closed).
 function classificationStockMetadata(o){
- const observed=classificationSourceTimestamp(classificationObservedAt(o)),source=classificationSourceTimestamp(o?.source_generated_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??source,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
+ const observed=classificationSourceTimestamp(classificationObservedAt(o)),fileTime=classificationSourceTimestamp(o?.source_generated_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??fileTime,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
  const expires=classificationSourceTimestamp(o?.expires_at,true);
- return {stock_observed_at:observed,stock_imported_at:source,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
+ return {stock_observed_at:observed,stock_imported_at:fileTime,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
 }
 const classificationLegacyOfferStale=offerStale;
 offerStale=function(o,cfg=S.cfg){return classificationReviewMode()||classificationEnabled()?false:classificationLegacyOfferStale(o,cfg);};

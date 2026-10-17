@@ -10,14 +10,17 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {createHarness}=require('../app/tests/isolated-harness.cjs'),{LightDOMParser}=require('./light-xml-parser.cjs');
 const log=m=>console.log(new Date().toISOString().slice(11,19),m,'rss',Math.round(process.memoryUsage().rss/1e6)+'MB');
 const [backupPath,sourcesPath,outDir]=process.argv.slice(2);if(!outDir)throw Error('Usage: SETTINGS_BACKUP SOURCES OUT_DIR');
+// Credentials only (the catalog has thousands of ordinary «key» fields): the config must carry no SITE/PIM key, password
+// or token — sanitizePortableConfig strips them from every backup.
+const backupSecrets=cfg=>{const hits=[];(function walk(o,p){if(o&&typeof o==='object')for(const [k,v] of Object.entries(o)){if(/^(?:key|key_?next|pim_key|supabasePassword|password|passwd|secret|token|access_token|refresh_token|api_?key|service_key|service_role|authorization)$/i.test(k)&&typeof v==='string'&&v)hits.push(p+k);walk(v,p+k+'.');}})(cfg,'cfg.');return hits;};
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
-const write=(name,data)=>{const f=path.join(outDir,name);fs.writeFileSync(f,data);fs.chmodSync(f,0o600);return f;};
+const write=(name,data)=>{const f=path.join(outDir,name);fs.writeFileSync(f,data,{mode:0o600});fs.chmodSync(f,0o600);return f;};
 const read=p=>{const b=fs.readFileSync(p);return JSON.parse(p.endsWith('.gz')?zlib.gunzipSync(b):b);};
 function harness(){const h=createHarness({runtime:true,production:true});h.ctx.XLSX=require('../app/vendor/xlsx-0.20.3.min.js');h.ctx.DOMParser=LightDOMParser;h.run('render=()=>{}');return h;}
 // Settings that must survive the reset and the backup → restore round trip.
 const {SETTINGS,quality}=require('./rehearsal-5-2-lib.cjs');
 (async()=>{
- fs.mkdirSync(outDir,{recursive:true,mode:0o700});const t0=performance.now();
+ fs.mkdirSync(outDir,{recursive:true,mode:0o700});fs.chmodSync(outDir,0o700);const t0=performance.now();
  const sourceBytes=fs.readFileSync(backupPath),backupSha=sha(sourceBytes);let source=read(backupPath);
  const h=harness();await h.run('Store.init()');h.ctx.source=source;
  await h.run('releaseStorage.write(Store.db,[],releaseStorage.portableRows(source))');h.ctx.source=null;source=null;await h.run('productionLoad()');
@@ -58,7 +61,7 @@ const {SETTINGS,quality}=require('./rehearsal-5-2-lib.cjs');
  await h.run('persist()');await h.run('backupDl("rehearsal-5-2",false)');
  const dl=h.downloads.at(-1);const backupBytes=Buffer.from(await dl.blob.arrayBuffer());
  write('rubizh-pim-backup-rehearsal-5-2.json',backupBytes);const backupGz=write('rubizh-pim-backup-rehearsal-5-2.json.gz',zlib.gzipSync(backupBytes,{level:9}));
- const backupText=backupBytes.toString('utf8');const secrets=/"(?:key|pim_key|supabasePassword|token|password|secret)"\s*:\s*"[^"]{6,}"/i.test(backupText);
+ const backupText=backupBytes.toString('utf8');const secrets=backupSecrets(JSON.parse(backupText).cfg);
  const statsOriginal=JSON.parse(h.run('JSON.stringify(catalogStats())'));const settingsFinal=JSON.parse(h.run(SETTINGS));
  const wireA=JSON.stringify(await h.run('pimSiteWire()'));
  // Restore into a clean profile (empty store, nothing loaded): validation, the restore the owner runs, persist.

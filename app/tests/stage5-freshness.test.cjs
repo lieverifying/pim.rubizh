@@ -70,3 +70,7 @@ test('an offer without any data time is not «fresh» (fail closed, like SITE): 
  const h=setup(1);h.run('Object.assign(S.products.get("p-a").variants[0].offers["supplier-a"],{at:null,imported_at:null,stock_observed_at:null});bumpData()');
  assert.equal(cls(h),'confirm');assert.equal(js(h,'finalFreshness()').confirm_products,1);assert.equal(js(h,'finalFreshness()').blocked,false);
 });
+test('stage 5.2: a READY model whose stock has no data time is counted and named on the publication screen (sold only after the manager confirms)',()=>{
+ const h=setup(1,{imported:true}),f=js(h,'finalFreshness()');
+ assert.equal(f.unknown_age_products,1);assert.match(h.run('finalFreshnessNotice()'),/Дата даних невідома для 1 товарів/);assert.equal(f.blocked,false);
+});

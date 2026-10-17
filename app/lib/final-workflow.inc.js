@@ -298,21 +298,22 @@ async function finalPromoteNextKey(){
 // confirms, with the counter; data between the thresholds is published and sold after the manager confirms.
 function finalFreshnessHoursLeft(hours){return Math.max(1,Math.ceil(hours));}
 const finalFreshness=memoByData(()=>{
- const policy=freshnessPolicy(),suppliers=new Map();let confirm=0,hidden=0;
+ const policy=freshnessPolicy(),suppliers=new Map();let confirm=0,hidden=0,unknown=0;
  for(const p of S.products.values()){
-  if(finalDecision(p).state!=='READY')continue;let open=false,aged=false,anyClass=false,lostPayment=false;
+  if(finalDecision(p).state!=='READY')continue;let open=false,aged=false,anyClass=false,lostPayment=false,unknownAge=false;
   for(const v of p.variants||[]){
    // A SKU without data age (no offer, no time, manual stock) keeps the model on SITE, exactly like SITE decides.
    const o=classificationSelectedOffer(p,v);if(!o?.sid){open=true;continue;}
    const cls=classificationFreshnessClass(p,v,o);if(cls===null){open=true;continue;}
    anyClass=true;if(cls!=='hidden')open=true;if(cls!=='fresh')aged=true;if(cls==='confirm'&&classificationInventory(o,v).availability_status==='IN_STOCK')lostPayment=true;
-   const age=classificationStockMetadata(o).stock_data_age_hours,prev=suppliers.get(o.sid);if(age==null)continue;
+   const age=classificationStockMetadata(o).stock_data_age_hours,prev=suppliers.get(o.sid);if(age==null){unknownAge=true;continue;}
    if(!prev||age>prev.age_hours)suppliers.set(o.sid,{sid:o.sid,name:S.cfg.suppliers.find(s=>s.id===o.sid)?.name||o.sid,age_hours:age,state:cls});
   }
   if(anyClass&&!open)hidden++;else if(aged&&lostPayment)confirm++;
+  if(unknownAge)unknown++;
  }
  const list=[...suppliers.values()].sort((a,b)=>b.age_hours-a.age_hours);
- return {pay_fresh_hours:policy.pay_fresh_hours,sell_max_days:policy.sell_max_days,suppliers:list,confirm_products:confirm,hidden_products:hidden,blocked:hidden>0};
+ return {pay_fresh_hours:policy.pay_fresh_hours,sell_max_days:policy.sell_max_days,suppliers:list,confirm_products:confirm,hidden_products:hidden,unknown_age_products:unknown,blocked:hidden>0};
 });
 function finalFreshnessLine(s,policy){
  const name='Дані постачальника '+s.name,hide=policy.sell_max_days*24-s.age_hours;
@@ -325,8 +326,9 @@ function finalFreshnessBlock({allowStale=false}={}){
  return 'STALE_DATA: данные поставщиков старше '+f.sell_max_days+' дн. ('+f.suppliers.filter(s=>s.state==='hidden').map(s=>s.name).join(', ')+'). Скільки товарів буде приховано: '+f.hidden_products+'. Обновите прайсы или подтвердите публикацию.';
 }
 function finalFreshnessNotice(){
- const f=finalFreshness();if(!f.suppliers.length)return '';
- const rows=f.suppliers.map(s=>'<li>'+esc(finalFreshnessLine(s,f))+'</li>').join('');
+ const f=finalFreshness();if(!f.suppliers.length&&!f.confirm_products&&!f.hidden_products&&!f.unknown_age_products)return '';
+ // Stage 5.2: SKUs with no data time at all (no file time) are sold only after the manager confirms — say so.
+ const rows=f.suppliers.map(s=>'<li>'+esc(finalFreshnessLine(s,f))+'</li>').join('')+(f.unknown_age_products?'<li>'+esc('Дата даних невідома для '+f.unknown_age_products+' товарів — на сайті оплата лише після підтвердження менеджера; оновіть прайс.')+'</li>':'');
  const counts=(f.confirm_products?'<p>Лише після підтвердження менеджера: <b>'+f.confirm_products+'</b> товарів.</p>':'')+(f.hidden_products?'<p><b>Скільки товарів буде приховано: '+f.hidden_products+'</b>.</p>':'');
  if(!f.blocked)return '<section class="panel" role="'+(f.confirm_products?'alert':'status')+'"><h2>Давність даних постачальників</h2><ul>'+rows+'</ul>'+counts+'</section>';
  return '<section class="panel" role="alert"><h2>Публикация остановлена: данные старше '+f.sell_max_days+' дн.</h2><ul>'+rows+'</ul>'+counts+'<p>Эти товары будут скрыты на сайте (не удалены), пока не придут свежие данные.</p><button class="btn" data-final="publishStale">Опубликовать всё равно</button></section>';

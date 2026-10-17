@@ -58,6 +58,7 @@ const workflowCatalogProblems=memoByData(function(){
  for(const supplier of S.cfg.suppliers||[]){if(supplier.disabled)continue;const t=offerTimes.get(supplier.id),hours=+S.cfg.freshHours||0,source=supplier.source||{};
   if(t?.stale&&hours>0)add('stock',supplier.id,supplier.name,'Наличие требует обновления у '+t.stale+' предложений.', 'sup:'+supplier.id,'warning',{sid:supplier.id});
   if(source.lastError)add('feed',supplier.id,supplier.name,source.lastError,'sup:'+supplier.id,'error',{sid:supplier.id});
+  else if(source.lastTimeNote)add('feed',supplier.id,supplier.name,source.lastTimeNote,'sup:'+supplier.id,'warning',{sid:supplier.id});
   const tm=supplier.terms||{};if(tm.preorderDefault==='yes'&&(!tm.preorderConfirmed||RubizhKits.preorderDays({lead_time:tm.preorderDays})==null))add('terms',supplier.id,supplier.name,'Подтвердите срок изготовления в условиях поставщика.','sup:'+supplier.id,'warning',{sid:supplier.id});
  }
  const I=computeIssues();for(const x of I.dupBc)add('identity','barcode|'+x.code,'Повторяется штрихкод',x.arr.map(a=>a.v.sku).join(', '),x.arr[0]?.p.id,'error');
@@ -100,7 +101,7 @@ async function workflowDownloadSource(raw){const url=workflowSourceURL(raw),cont
  try{const response=await fetch(url,{signal:controller.signal,credentials:'omit',cache:'no-store'});if(!response.ok)throw Error('Поставщик вернул HTTP '+response.status);if(+response.headers.get('content-length')>limit)throw Error('Прайс больше 64 МБ.');
  const chunks=[];let total=0;if(response.body?.getReader){const reader=response.body.getReader();for(;;){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>limit){await reader.cancel();throw Error('Прайс больше 64 МБ.');}chunks.push(value);}}
  else{const bytes=await response.arrayBuffer();if(bytes.byteLength>limit)throw Error('Прайс больше 64 МБ.');chunks.push(bytes);}
- const blob=new Blob(chunks,{type:response.headers.get('content-type')||''});if(!blob.size)throw Error('Получен пустой файл прайса.');const text=await blob.slice(0,250).text();if(/text\/html/i.test(blob.type)||/^\s*<!doctype\s+html|^\s*<html\b/i.test(text))throw Error('Ссылка ведёт на страницу, а не на файл прайса.');const modified=Date.parse(response.headers.get('last-modified')||'');return {blob,url,lastModified:Number.isFinite(modified)?modified:null};
+ const blob=new Blob(chunks,{type:response.headers.get('content-type')||''});if(!blob.size)throw Error('Получен пустой файл прайса.');const text=await blob.slice(0,250).text();if(/text\/html/i.test(blob.type)||/^\s*<!doctype\s+html|^\s*<html\b/i.test(text))throw Error('Ссылка ведёт на страницу, а не на файл прайса.');const modified=Date.parse(response.headers.get('last-modified')||'');return {blob,url,lastModified:Number.isFinite(modified)?modified:null,lastModifiedSource:'HTTP',fetchedAt:Date.now()};
  }catch(error){if(error.name==='AbortError')throw Error('Скачивание прайса заняло больше 45 секунд.');if(error.name==='TypeError')throw Error('Не удалось скачать прайс. Проверьте ссылку и разрешение CORS у поставщика; для закрытых источников нужен серверный загрузчик.');throw error;}finally{clearTimeout(timer);}
 }
 function workflowReadWorkbook(buffer,name){
@@ -114,14 +115,14 @@ async function workflowParseSource(download,supplier){const {blob,url}=download;
  const map=profileValid?structuredClone(profile.map):autoMap(headers,supplier.mapping);
  const missing=FIELDS.filter(f=>f.req&&(map[f.k]==null||map[f.k]===''));if(missing.length&&supplier.source?.autoApply)throw Error('Изменилась структура прайса. Проверьте обязательные колонки вручную.');
  // Stage 5.2: the data time of the file (inside it, else its modification time) — never the import time.
- const source_time=sourceFileTime({header,mtime:download.lastModified??null,payHours:freshnessPolicy().pay_fresh_hours});
+ const source_time=sourceFileTime({header,mtime:download.lastModified??null,mtimeSource:download.lastModifiedSource||'FILE',fetchedAt:download.fetchedAt??null,payHours:freshnessPolicy().pay_fresh_hours});
  return {sup:supplier.id,file:name,wb,sheets,sheet,rows,hdr,map,zero:false,xml:isXml,source_time,sourceId:supplier.id,sourceURLHash:fnvHash(url),sourceHeaders:signature,sourceProfileValid:profileValid};
 }
 function workflowCanFetch(){return !S.snap&&!S.edit&&!S.priceDraft&&!CE_UI.busy&&!S.saving&&!S.imp?.rows&&!WORKFLOW.unsaved;}
 async function workflowFetchSource(sid,{scheduled=false}={}){
  const supplier=S.cfg.suppliers.find(s=>s.id===sid);if(!supplier||supplier.disabled)throw Error('Поставщик не найден или отключён.');if(!workflowCanFetch()){if(scheduled)return {status:'busy'};throw Error('Сначала сохраните карточку, завершите текущий импорт или сохраните настройки цен.');}
  const source=supplier.source;if(!source?.url)throw Error('Сохраните ссылку на прайс в карточке поставщика.');const previousView=S.view;
- try{source.lastAttempt=Date.now();const download=await workflowDownloadSource(source.url),I=await workflowParseSource(download,supplier);source.lastChecked=Date.now();delete source.lastError;S.cfgDirty=true;bumpData();if(!await persist())throw Error('Статус скачивания не сохранился.');S.imp=I;
+ try{source.lastAttempt=Date.now();const download=await workflowDownloadSource(source.url),I=await workflowParseSource(download,supplier);source.lastChecked=Date.now();delete source.lastError;source.lastTimeNote=I.source_time&&(I.source_time.warning||I.source_time.provenance==='NONE')?sourceFileTimeNote(I.source_time):null;S.cfgDirty=true;bumpData();if(!await persist())throw Error('Статус скачивания не сохранился.');S.imp=I;
   if(source.autoApply&&I.sourceProfileValid){await doImport();if(!S.snap||!S.imp?.preview)throw Error('Не удалось подготовить обновление прайса.');const audit=previewAudit(S.imp);if(!audit.ok||S.imp.preview.some(r=>r.suspicious)){cancelImport(true);S.imp=null;throw Error('Прайс требует ручной проверки: неполный файл или ошибка самопроверки.');}
    const ok=await applyImport({automatic:true});if(!ok)throw Error('Автоматическое обновление не применено. Проверьте результат в разделе проблем.');S.view=previousView;render();return {status:'applied'};
   }
@@ -158,7 +159,7 @@ function sourceKyivTime(raw){
  // A Date may come from another realm (a workbook parsed elsewhere): check the tag, not instanceof.
  if(Object.prototype.toString.call(raw)==='[object Date]')return Number.isFinite(raw.getTime())?raw.getTime():null;
  if(typeof raw==='number')return Number.isFinite(raw)?raw:null;
- const text=String(raw).trim(),m=/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(text);
+ const text=String(raw).trim();if(text.length>64)return null;const m=/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?)?$/.exec(text);
  if(!m){const t=Date.parse(text);return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)&&Number.isFinite(t)?t:null;}
  const [y,mo,d,h=0,mi=0,se=0]=m.slice(1).map(x=>x==null?0:Number(x)),wall=[y,mo,d,h,mi,se].join(',');
  const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Kyiv',hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
@@ -167,20 +168,26 @@ function sourceKyivTime(raw){
  const ok=[3,2].map(off=>Date.UTC(y,mo-1,d,h,mi,se)-off*3600000).filter(t=>seen(t)===wall);
  return ok.length?Math.min(...ok):null;
 }
-function sourceFileTime({header=null,mtime=null,now=Date.now(),payHours=72}={}){
+// Security review: a header that cannot be checked against any file time, and a server time equal to the moment of the
+// download (a CDN or a feed generated on request), are kept but shown to the owner as unverified.
+function sourceFileTime({header=null,mtime=null,mtimeSource='FILE',fetchedAt=null,now=Date.now(),payHours=72}={}){
  const valid=t=>t!=null&&t>=SOURCE_TIME_MIN&&t<=now+300000?t:null;
  const h=valid(sourceKyivTime(header)),f=valid(sourceKyivTime(mtime));
  const out={at:null,provenance:'NONE',header:h,mtime:f,warning:null};
  if(h!=null&&(f==null||h<=f+300000)){out.at=h;out.provenance='FILE_HEADER';if(f!=null&&f-h>payHours*3600000)out.warning='HEADER_OLDER_THAN_FILE';}
  else if(f!=null){out.at=f;out.provenance='FILE_MTIME';if(h!=null)out.warning='HEADER_AFTER_FILE';}
  if(header!=null&&header!==''&&h==null)out.warning=out.warning||'HEADER_DATE_INVALID';
+ if(out.provenance==='FILE_HEADER'&&f==null)out.warning=out.warning||'FILE_TIME_UNVERIFIED';
+ if(out.provenance==='FILE_MTIME'&&mtimeSource==='HTTP'&&fetchedAt!=null&&Math.abs(fetchedAt-f)<=300000)out.warning=out.warning||'SERVER_TIME_IS_DOWNLOAD_TIME';
  return out;
 }
 function sourceFileTimeNote(t){
  if(!t)return '';const day=x=>x==null?'—':new Date(x).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv'});
  if(t.provenance==='NONE')return 'Дата даних файлу невідома — на сайті оплата лише після підтвердження менеджера.';
- const base='Дані файлу станом на '+day(t.at)+(t.provenance==='FILE_HEADER'?' (дата у файлі)':' (дата збереження файлу)')+'.';
+ const base='Дані файлу станом на '+day(t.at)+(t.provenance==='FILE_HEADER'?' (дата у файлі)':' (дата збереження файлу — це може бути і дата, коли файл завантажили)')+'.';
  if(t.warning==='HEADER_OLDER_THAN_FILE')return base+' Увага: дата у файлі '+day(t.header)+', а файл збережено '+day(t.mtime)+' — постачальник міг не оновити дату або дані застарілі.';
  if(t.warning==='HEADER_AFTER_FILE')return base+' Дата у файлі пізніша за дату збереження — взято дату збереження.';
+ if(t.warning==='FILE_TIME_UNVERIFIED')return base+' Дата у файлі не перевірена: дати збереження файлу немає.';
+ if(t.warning==='SERVER_TIME_IS_DOWNLOAD_TIME')return base+' Сервер постачальника віддав час завантаження — дату даних не перевірено.';
  return base;
 }

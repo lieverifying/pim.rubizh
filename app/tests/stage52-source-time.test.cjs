@@ -28,7 +28,8 @@ async function importFile(h,bytes,name,lastModified){
 // The one offer of SKU A-1 (in a product or, if not yet grouped, in the queue).
 function offer(h){return JSON.parse(h.run(`JSON.stringify((()=>{for(const p of S.products.values())for(const v of p.variants)if(v.offers?.["supplier-a"]?.s==="A-1")return {...v.offers["supplier-a"],sid:"supplier-a",_p:p.id};for(const it of S.queue.values())if(it.s==="A-1")return {...it,sid:"supplier-a",_queue:true};return null;})())`));}
 const meta=(h,o)=>JSON.parse(h.run('JSON.stringify(classificationStockMetadata('+JSON.stringify(o)+'))'));
-const cls=(h,o)=>{const m=meta(h,o),p=JSON.parse(h.run('JSON.stringify(freshnessPolicy())'));if(m.stock_data_age_hours==null)return 'confirm';return m.stock_data_age_hours<=p.pay_fresh_hours?'fresh':m.stock_data_age_hours<=p.sell_max_days*24?'confirm':'hidden';};
+// The PIM class of the offer (the same thresholds SITE applies): fresh | confirm | hidden.
+const cls=(h,o)=>h.run('(()=>{const p=S.products.get('+JSON.stringify(o._p||'')+');const v=p&&p.variants.find(x=>x.offers&&x.offers["supplier-a"]);return p?classificationFreshnessClass(p,v,{sid:"supplier-a",...v.offers["supplier-a"]}):classificationFreshnessClass({variants:[]},{},'+JSON.stringify(o)+');})()');
 
 test('Kyiv wall time: summer +03, winter +02, the repeated autumn hour → earlier instant, the spring gap is invalid; explicit zones kept',async()=>{
  const h=await harness(),k=s=>h.run('sourceKyivTime('+JSON.stringify(s)+')');
@@ -107,4 +108,18 @@ test('a product created from the queue keeps the last confirmed availability, li
  const before=h.run('JSON.stringify(stableValue105([...S.products.values()]))');
  h.run('for(const p of S.products.values())for(const v of p.variants)for(const [sid,o] of Object.entries(v.offers||{}))if(!o.last_valid_inventory_observation){const inv=classificationInventory({sid,...o},v);if(inv.availability_confirmation==="CONFIRMED")o.last_valid_inventory_observation={...inv,supplier_sku:o.s};}');
  assert.equal(h.run('JSON.stringify(stableValue105([...S.products.values()]))'),before);
+});
+test('security review: a header that cannot be checked against the file time is marked; a server time equal to the download is flagged; overlong dates ignored',async()=>{
+ const h=await harness(),now=Date.now(),t=a=>JSON.parse(h.run('JSON.stringify(sourceFileTime('+JSON.stringify(a)+'))'));
+ let r=t({header:kyiv(now-H)});assert.equal(r.provenance,'FILE_HEADER');assert.equal(r.warning,'FILE_TIME_UNVERIFIED','no file time to check the header against');
+ assert.match(h.run('sourceFileTimeNote('+JSON.stringify(r)+')'),/не перевірена/);
+ r=t({mtime:now-60000,mtimeSource:'HTTP',fetchedAt:now});assert.equal(r.provenance,'FILE_MTIME');assert.equal(r.warning,'SERVER_TIME_IS_DOWNLOAD_TIME');
+ assert.match(h.run('sourceFileTimeNote('+JSON.stringify(r)+')'),/час завантаження/);
+ const t0=Date.now();assert.equal(h.run('sourceKyivTime("2026-10-01T12:15:00Z"+"0".repeat(1<<20))'),null,'an overlong «date» is not a date');assert.ok(Date.now()-t0<200,'and costs nothing');
+});
+test('code review: a scheduled price fetch with an unknown or doubtful file date is shown in «Проблемы» (not blocked)',async()=>{
+ // Kits are not part of this check (this minimal profile has no kit feed).
+ const h=await harness();h.run('pimKitProducts=()=>[]');h.run('S.cfg.suppliers[0].source={url:"https://supplier.invalid/feed.xml",lastTimeNote:sourceFileTimeNote({provenance:"NONE",at:null})};bumpData()');
+ const rows=JSON.parse(h.run('JSON.stringify(workflowCatalogProblems())'));const row=rows.find(r=>r.kind==='feed');
+ assert.ok(row,'a feed warning');assert.equal(row.severity,'warning');assert.match(row.detail,/Дата даних файлу невідома/);
 });
