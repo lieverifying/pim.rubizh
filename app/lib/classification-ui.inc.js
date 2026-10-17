@@ -280,7 +280,8 @@ const classificationSimpleVariant=simpleVariant;
 simpleVariant=function(p,v){const old=classificationSimpleVariant(p,v);if(!classificationEnabled())return old;const availability=classificationAvailability(p,v),eligible=availability.order_submission_allowed&&old.site_price>0&&!old.margin_blocked;return {...old,...availability,request:availability.requires_order_confirmation,order_on_request:availability.availability==='ORDER_ON_REQUEST',available:availability.order_submission_allowed,eligible,availability_label:({IN_STOCK:'В наявності',PREORDER:'Під замовлення — підтвердження перед оплатою',ORDER_ON_REQUEST:'На запит — підтвердження перед оплатою',OUT_OF_STOCK:'Немає в наявності',UNKNOWN:'Наявність потребує підтвердження',SIZE_CONFIRMATION_REQUIRED:'Розмір потребує підтвердження'})[availability.availability],lead_time_days:availability.availability==='PREORDER'&&availability.delivery_lead_time_days==null?confirmedPreorderDays(old.selected_offer):null};};
 function classificationSourceTimestamp(raw,allowFuture=false){
  if(raw==null||String(raw).trim()==='')return null;
- const value=typeof raw==='number'?raw:/^\d{13}$/.test(String(raw))?Number(raw):Date.parse(String(raw));
+ // Stage 5.5 (D-77): an Excel date serial (a number of days, 1900 or 1904 system of the workbook) is a date, not 1970.
+ const value=typeof raw==='number'?(raw>0&&raw<1e6?xlsxSerialToMs(raw,S.imp?.wb?.Workbook?.WBProps?.date1904===true):raw):/^\d{13}$/.test(String(raw))?Number(raw):Date.parse(String(raw));
  return Number.isFinite(value)&&value>0&&(allowFuture||value<=Date.now())?value:null;
 }
 function classificationSourceBoolean(raw){return /^(?:1|true|yes|так|да)$/iu.test(String(raw??'').trim());}

@@ -478,3 +478,43 @@ const ceAction55w=ceAction;ceAction=async function(a,t){
  if(a==='ceWaveSaveCfg'){for(const el of $$('[data-launch-cfg]')){const k=el.dataset.launchCfg,v=Number(el.value);if(k==='waveLimit'&&Number.isFinite(v))S.cfg.waveLimit=Math.max(50,Math.min(3000,Math.round(v)));if(k==='waveMinPrice'&&Number.isFinite(v))S.cfg.waveMinPrice=Math.max(0,Math.min(5000,Math.round(v)));}const strict=$('[data-launch-strict]');if(strict)S.cfg.waveStrict=strict.checked;S.cfgDirty=true;bumpData();await persist();render();return;}
  return ceAction55w(a,t);
 };
+
+// Stage 5.5 (owner D-77, S52-03): import hardening and the dry run of a new supplier.
+// A price written «1.250» or «1,250» can be 1.25 or 1250: it is not accepted (the product stays without a price).
+function importPrice(v){if(typeof v==='number')return Number.isFinite(v)?v:null;const t=String(v??'').trim().replace(/[\s  ]/g,'');if(/^\d{1,3}[.,]\d{3}$/.test(t))return null;return parseNum(v);}
+// Excel serial days → the moment in Kyiv time (the 1904 system starts 1462 days later).
+function xlsxSerialToMs(serial,date1904=false){
+ const days=Number(serial)+(date1904?1462:0),utc=Math.round((days-25569)*86400000);
+ const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Kyiv',hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(new Date(utc)).map(x=>[x.type,x.value]));
+ const asKyiv=Date.UTC(+parts.year,+parts.month-1,+parts.day,+parts.hour,+parts.minute,+parts.second);return utc-(asKyiv-utc);
+}
+function supplierDryRun(I){
+ const errors=[],warnings=[],rows=(I?.rows||[]).slice((I?.hdr??0)+1),map=I?.map||{},g=(r,k)=>map[k]!=null&&map[k]!==''?r[map[k]]:'';
+ if(I?.xml){const c=I.rows?.ymlCurrency||{declared:[],offers:{}},offers=Object.keys(c.offers||{});const bad=offers.filter(x=>!['UAH','ГРН'].includes(x)),declaredOk=(c.declared||[]).some(x=>['UAH','ГРН'].includes(x));
+  if(bad.length||!offers.length||!declaredOk&&offers.every(x=>!x))errors.push('Валюта YML: '+(bad.filter(Boolean).join(', ')||'не вказана')+' — потрібна гривня (UAH); імпорт цього постачальника заблоковано');}
+ const amb=[];rows.forEach((r,i)=>{for(const k of ['cost','rrp']){const t=String(g(r,k)??'').trim().replace(/[\s ]/g,'');if(/^\d{1,3}[.,]\d{3}$/.test(t))amb.push('рядок '+(i+2)+': «'+t+'»');}});
+ if(amb.length)errors.push('Неоднозначні числа (1.250 — це 1,25 чи 1250?): '+amb.slice(0,8).join('; ')+(amb.length>8?' …':'')+' — такі ціни не приймаються');
+ const seen=new Map(),conflicts=[];rows.forEach((r,i)=>{const sku=String(g(r,'sku')??'').trim();if(!sku)return;const k=sku+'|'+String(g(r,'size')??'').trim().toLowerCase()+'|'+String(g(r,'color')??'').trim().toLowerCase();if(seen.has(k))conflicts.push(sku+' (рядки '+seen.get(k)+' і '+(i+2)+')');else seen.set(k,i+2);});
+ if(conflicts.length)errors.push('Конфлікт: той самий артикул з тим самим розміром і кольором — '+conflicts.slice(0,8).join('; ')+'; без перезапису');
+ const manyPhotos=rows.filter(r=>String(g(r,'photos')??'').split(/[\s,;]+/).filter(Boolean).length>15).length;if(manyPhotos)warnings.push('Фото: у '+manyPhotos+' рядках більше 15 — беруться перші 15');
+ const slash=rows.filter(r=>/(?:^|[\s,;])\/\//.test(String(g(r,'photos')??''))).length;if(slash)warnings.push('Фото: у '+slash+' рядках адреси «//» — перетворено на https:');
+ const med=a=>{const s=a.filter(x=>x>0).sort((x,y)=>x-y);return s.length?s[Math.floor(s.length/2)]:null;};
+ const mine=med(rows.map(r=>importPrice(g(r,'cost'))).filter(x=>x!=null)),ours=med([...S.products.values()].filter(p=>!p.archived).flatMap(p=>(p.variants||[]).map(v=>calc(p,v).price)).filter(x=>x!=null));
+ if(mine&&ours&&(mine>ours*3||mine*3<ours))warnings.push(`Медіана ціни постачальника ${mine} грн, у каталозі ${ours} грн — Перевірте одиниці/валюту`);
+ const shares={rows:rows.length,no_photo:0,no_brand:0,no_size:0,no_description:0};for(const r of rows){if(!String(g(r,'photos')??'').trim())shares.no_photo++;if(!String(g(r,'brand')??'').trim())shares.no_brand++;if(!String(g(r,'size')??'').trim())shares.no_size++;if(!String(g(r,'desc')??'').trim())shares.no_description++;}
+ const st=I?.source_time,data_time=st?.at?new Date(st.at).toISOString()+' ('+(st.provenance||'?')+')':'без дати даних — продаж лише через менеджера';
+ return {errors,warnings,shares,data_time,blocked:errors.length>0};
+}
+function supplierDryRunVerify(sid,report){const s=S.cfg.suppliers.find(x=>x.id===sid);if(!s)return {ok:false,why:'Постачальника не знайдено'};if(report?.errors?.length)return {ok:false,why:'Спершу виправте помилки сухого прогону'};s.needsDryRun=false;s.dryRunVerifiedAt=Date.now();S.cfgDirty=true;bumpData();return {ok:true};}
+function supplierDryRunPanel(){
+ const I=S.imp;if(!I?.rows)return '';const sup=S.cfg.suppliers.find(s=>s.id===I.sup),r=supplierDryRun(I),pct=n=>r.shares.rows?Math.round(n*100/r.shares.rows)+' %':'—';
+ return `<section class="panel" data-dry-run><h2>Сухий прогін постачальника${sup?' · '+esc(sup.name):''}</h2>${sup?.needsDryRun?'<p class="small">Новий постачальник: його товари потраплять у хвилю лише після чистого прогону й підтвердження.</p>':''}
+ ${r.errors.map(e=>`<p class="small ce-warning" role="alert">Помилка: ${esc(e)}</p>`).join('')}${r.warnings.map(w=>`<p class="small">Попередження: ${esc(w)}</p>`).join('')}
+ <table><thead><tr><th>Рядків</th><th>Без фото</th><th>Без бренду</th><th>Без розмірів</th><th>Без опису</th></tr></thead><tbody><tr><td>${r.shares.rows}</td><td>${pct(r.shares.no_photo)}</td><td>${pct(r.shares.no_brand)}</td><td>${pct(r.shares.no_size)}</td><td>${pct(r.shares.no_description)}</td></tr></tbody></table>
+ <p class="small">Час даних: ${esc(r.data_time)}</p>${sup?.needsDryRun?`<button class="btn" data-act="wfDryRunVerify" data-sid="${esc(sup.id)}" ${r.errors.length?'disabled':''}>Постачальника перевірено</button>`:''}</section>`;
+}
+const vImport55=vImport;vImport=function(){return supplierDryRunPanel()+vImport55();};
+const workflowAction55=workflowAction;workflowAction=async function(action,t){
+ if(action==='wfDryRunVerify'){const r=supplierDryRunVerify(t.dataset.sid,supplierDryRun(S.imp));toast(r.ok?'Постачальника перевірено':r.why);if(r.ok)await persist();render();return;}
+ return workflowAction55(action,t);
+};
