@@ -21,7 +21,7 @@ const keep=new Set(chosen);wire.products=wire.products.filter(p=>keep.has(p.id))
 const freshness=JSON.parse(h.run('JSON.stringify(freshnessPolicy())'));
 const head=Object.fromEntries(JSON.parse(h.run('JSON.stringify(Object.keys(PIM_SITE_CONTRACT).filter(k=>k!=="envelope"))')).map(k=>[k,wire[k]]));
 const CHUNK=100,chunks=[];for(let i=0;i<wire.products.length;i+=CHUNK)chunks.push(wire.products.slice(i,i+CHUNK));if(!chunks.length)chunks.push([]);
-const batchId='PB-'+wire.catalog_revision+'-staging55';
+const batchId='PB-'+wire.catalog_revision+'-'+h.run('fnvHash('+JSON.stringify('staging-5.5-'+chosen.join(','))+')');
 (async()=>{
  for(let i=0;i<chunks.length;i++){
   const body={...head,version:wire.version,pim_version:wire.pim_version,currency:wire.currency,generated_at:wire.generated_at,catalog_revision:wire.catalog_revision,batch_id:batchId,chunk_index:i,chunk_count:chunks.length,products:chunks[i],hide_ids:[]};
