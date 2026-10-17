@@ -32,7 +32,7 @@ function classificationSources(p){return (p.variants||[]).flatMap(v=>Object.entr
 // Supplier facts for evidence: the card's supplier description, else the description each supplier offer carries
 // (after a clean import the text lives on the offers; the publication path already reads it the same way).
 function classificationSupplierDescription(p){return ceSupplierSource(p)||p.source_description||p.desc||(p.variants||[]).flatMap(v=>Object.values(v.offers||{}).map(o=>String(o.source_description||''))).find(s=>s.trim())||'';}
-function classificationDecision(p){
+function classificationDecisionBase(p){
  const id=p.canonical_category_id||p.last_confirmed_category_id||categoryIdForPath(p.category);
  if(classificationLocked(p,'category')||classificationLocked(p,'canonical_category_id')||classificationLocked(p,'primary_product_type'))return {tier:'SAFE_AUTO',category:id,rule_id:'manual-lock',reason:'Ручне рішення збережене.',protected:true};
  const gathered=classificationSources(p),sources=gathered.length?gathered:p.category_sources||[],dto={...p,name:p.name,description:classificationSupplierDescription(p),attrs:p.attrs,sources};
@@ -50,6 +50,48 @@ function classificationDecision(p){
   return {tier:proven?'SAFE_AUTO':'LIKELY',category:ids[0],rule_id:'canonical-whole-item-corroborated',reason:proven?'Тип виробу підтверджений заголовками та незалежними фактами постачальника.':'Недостатньо незалежних source facts.',evidence:{supplier_titles:sources.map(s=>s.original_name)}};
  }
  return {...evidence,tier:ids.length===1?'LIKELY':evidence.tier,category:evidence.category||ids[0]||null};
+}
+// Stage 5.4 (owner: automatic rules first, only high confidence). «Supplier category consensus»: inside ONE supplier
+// category of ONE supplier, at least CATEGORY_CONSENSUS.min products were confirmed (SAFE_AUTO) by independent evidence
+// and at least CATEGORY_CONSENSUS.share of them landed in one canonical category; a LIKELY/AMBIGUOUS product of that
+// supplier category whose own dictionary suggestion IS that category (and whose title alone does not point to another
+// confirmed category) is then confirmed the same way. Both the dictionary and the supplier's own category agree; a
+// supplier category that mixes product types never reaches the share. Computed only after an import, from decisions
+// made without this rule (no rule feeds itself); manual locks and confirmed mappings are never touched.
+const CATEGORY_CONSENSUS={min:10,share:0.95};let categoryConsensusMap=null;
+function categoryConsensusKey(s){return (s.supplier_id||'')+'\u0000'+norm(s.supplier_category_raw||'')+'\u0000'+norm(s.supplier_category_path_raw||'');}
+function categoryConsensusBuild(){
+ const counts=new Map();
+ for(const p of S.products.values()){if(p.archived||p.merged_into||p.category_confidence_tier!=='SAFE_AUTO'||!p.canonical_category_id||p.category_rule_id==='supplier-category-consensus')continue;
+  for(const k of new Set(classificationSources(p).filter(s=>norm(s.supplier_category_raw||'')).map(categoryConsensusKey))){if(!counts.has(k))counts.set(k,new Map());const c=counts.get(k);c.set(p.canonical_category_id,(c.get(p.canonical_category_id)||0)+1);}}
+ const out=new Map();for(const [k,c] of counts){const total=[...c.values()].reduce((a,b)=>a+b,0),[top,n]=[...c.entries()].sort((a,b)=>b[1]-a[1])[0];out.set(k,{category:top,count:n,total});}
+ return out;
+}
+function categoryConsensusDecision(p,r){
+ // LIKELY only: an AMBIGUOUS suggestion may be one arbitrary candidate among conflicting ones (left to the owner).
+ if(!categoryConsensusMap||!r.category||r.protected||r.tier!=='LIKELY')return null;
+ // No supplier category = no supplier evidence (an empty category would pool unrelated products).
+ const sources=classificationSources(p);if(!sources.length||sources.some(s=>!norm(s.supplier_category_raw||'')))return null;
+ const support=sources.map(s=>categoryConsensusMap.get(categoryConsensusKey(s)));
+ if(support.some(x=>!x||x.category!==r.category||x.total<CATEGORY_CONSENSUS.min||x.count/x.total<CATEGORY_CONSENSUS.share))return null;
+ const own=RubizhCategories.classify({name:p.name,original_name:p.name},categoryOptions());if(own.canonical_category_id&&own.canonical_category_id!==r.category&&own.category_status==='CONFIRMED')return null;
+ return {tier:'SAFE_AUTO',category:r.category,rule_id:'supplier-category-consensus',reason:'Категорія постачальника: '+support.map(x=>x.count+' з '+x.total).join(', ')+' підтверджених товарів у цій категорії; словник пропонує ту саму.',evidence:{previous_tier:r.tier,previous_rule:r.rule_id,supplier_categories:sources.map(s=>s.supplier_category_raw||''),consensus:support}};
+}
+function classificationDecision(p){const r=classificationDecisionBase(p);return categoryConsensusDecision(p,r)||r;}
+// Re-judges the open category questions with the consensus of the whole catalog (after each import). Returns how many it confirmed.
+function categoryConsensusPass(){
+ if(!classificationEnabled()||classificationReviewMode())return 0;
+ categoryConsensusMap=categoryConsensusBuild();let n=0;
+ try{for(const p of S.products.values()){if(p.archived||p.merged_into)continue;
+   // An earlier consensus confirmation is re-judged too: it lapses (back to the owner) when its evidence is gone.
+   const earlier=p.category_rule_id==='supplier-category-consensus'&&p.category_confidence_tier==='SAFE_AUTO';
+   if(!earlier&&!(p.classification_exceptions||[]).some(e=>e.kind==='category'&&e.status==='OPEN'))continue;
+   const r=categoryConsensusDecision(p,classificationDecisionBase(p));if(!r&&!earlier)continue;
+   if(r&&earlier)continue;
+   if(!r){const map=categoryConsensusMap;categoryConsensusMap=null;try{delete p.classification_input_fingerprint;delete p.category_rule_id;classificationApplyProduct(p);}finally{categoryConsensusMap=map;}continue;}
+   delete p.classification_input_fingerprint;classificationApplyProduct(p);if(p.category_rule_id==='supplier-category-consensus')n++;}}
+ finally{categoryConsensusMap=null;}
+ if(n)bumpData();return n;
 }
 const classificationPreviousDecision=categoryDecisionForProduct;
 categoryDecisionForProduct=function(p,...args){
@@ -290,6 +332,7 @@ runImport=function(sup,rows,hdr,map,opts={}){
  try{S._classificationSupplier=sup;result=classificationImport(sup,rows,hdr,map,{...opts,zeroMissing:classificationEnabled()?false:opts.zeroMissing});}finally{S._classificationSupplier=previousSupplier;}
  const touched=[...S.products.values()].filter(p=>p.variants.some(v=>v.offers?.[sup.id]?.at===result.at));
  for(const p of touched){if(contentBefore?.has(p.id)){const old=contentBefore.get(p.id);for(const k of ['name','desc','attrs','photos','photoMeta','fieldMeta','translated_description_uk','source_description'])if(Object.hasOwn(old,k))p[k]=old[k];else delete p[k];}classificationApplyProduct(p);}
+ bumpData();result.category_consensus=categoryConsensusPass();
  // MODEL → COLOR after classification: sizes proven only now (e.g. approved net grid W×H) let the size cards of one
  // supplier model merge in the same import; merged survivors are re-classified.
  if(typeof mcEnabled==='function'&&mcEnabled()&&!classificationReviewMode()){const ids=new Set(touched.map(p=>p.id));bumpData();for(const r of mcMigrate(mcPlan().automatic.filter(g=>g.ids.some(id=>ids.has(id))))){const survivor=S.products.get(r.id);if(survivor)classificationApplyProduct(survivor);}}

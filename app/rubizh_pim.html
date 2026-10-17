@@ -9529,7 +9529,7 @@ async function workflowContentAfterImport(results,apply=false){if(typeof classif
  return {prepared,applied,review};
 }
 function workflowSourceURL(raw){const u=new URL(String(raw||'').trim());if(u.protocol!=='https:'||u.username||u.password)throw Error('Нужна прямая HTTPS-ссылка на прайс без логина и пароля в адресе.');return u.href;}
-function workflowSourcePanel(s){const source=s.source||{};return `<details class="panel workflow-source" data-source-panel="${esc(s.id)}"><summary><b>Автоматическое обновление прайса</b></summary><p class="small muted">Проверка по расписанию работает, пока PIM открыта. Для работы при закрытом браузере нужна задача на хостинге и подключение к серверной базе.</p><label class="f">Прямая ссылка на XLSX, CSV или XML<input type="url" data-source-url="${esc(s.id)}" value="${esc(source.url||'')}" placeholder="https://supplier.example/prices.xlsx"></label><div class="row"><label class="f">Интервал, часов<input type="number" min="1" max="168" step="1" data-source-hours="${esc(s.id)}" value="${+source.hours||24}"></label><label class="chk"><input type="checkbox" data-source-enabled="${esc(s.id)}" ${source.enabled?'checked':''}> Проверять автоматически</label><label class="chk"><input type="checkbox" data-source-apply="${esc(s.id)}" ${source.autoApply?'checked':''}> Применять после проверки профиля</label></div><p class="small">${source.profile?'Профиль колонок подтверждён.':'Первое скачивание нужно проверить и применить в разделе импорта.'} Отсутствующие в файле позиции автоматически не обнуляются; устаревшее наличие учитывается отдельно.</p><div class="row"><button class="btn" data-act="wfSaveSource" data-sid="${esc(s.id)}">Сохранить источник</button><button class="btn primary" data-act="wfFetchSource" data-sid="${esc(s.id)}" ${source.url?'':'disabled'}>Скачать и проверить</button></div>${source.lastChecked?`<p class="small muted">Проверяли: ${esc(fmtDate(source.lastChecked))}</p>`:''}${source.lastApplied?`<p class="small">Обновление применено: ${esc(fmtDate(source.lastApplied))}</p>`:''}${source.lastError?`<p class="finance-bad">${esc(source.lastError)}</p>`:''}</details>`;}
+function workflowSourcePanel(s){const source=s.source||{};return `<details class="panel workflow-source" data-source-panel="${esc(s.id)}"><summary><b>Автоматическое обновление прайса</b></summary><p class="small muted">Проверка по расписанию работает, пока PIM открыта. Для работы при закрытом браузере нужна задача на хостинге и подключение к серверной базе.</p><label class="f">Прямая ссылка на XLSX, CSV или XML<input type="url" data-source-url="${esc(s.id)}" value="${esc(source.url||'')}" placeholder="https://supplier.example/prices.xlsx"></label><div class="row"><label class="f">Интервал, часов<input type="number" min="1" max="168" step="1" data-source-hours="${esc(s.id)}" value="${+source.hours||24}"></label><label class="chk"><input type="checkbox" data-source-enabled="${esc(s.id)}" ${source.enabled?'checked':''}> Проверять автоматически</label><label class="chk"><input type="checkbox" data-source-apply="${esc(s.id)}" ${source.autoApply?'checked':''}> Применять после проверки профиля</label><label class="chk"><input type="checkbox" data-source-ignore-header="${esc(s.id)}" ${s.source_time_ignore_header===true?'checked':''}> Ігнорувати дату всередині файлу (рішення власника): час даних — дата скачування файлу</label><label class="chk"><input type="checkbox" data-source-sizes-description="${esc(s.id)}" ${s.sizes_from_description===true?'checked':''}> Розміри — з опису й характеристик (не знайдено — «розмір уточнюється» і модерація)</label></div><p class="small">${source.profile?'Профиль колонок подтверждён.':'Первое скачивание нужно проверить и применить в разделе импорта.'} Отсутствующие в файле позиции автоматически не обнуляются; устаревшее наличие учитывается отдельно.</p><div class="row"><button class="btn" data-act="wfSaveSource" data-sid="${esc(s.id)}">Сохранить источник</button><button class="btn primary" data-act="wfFetchSource" data-sid="${esc(s.id)}" ${source.url?'':'disabled'}>Скачать и проверить</button></div>${source.lastChecked?`<p class="small muted">Проверяли: ${esc(fmtDate(source.lastChecked))}</p>`:''}${source.lastApplied?`<p class="small">Обновление применено: ${esc(fmtDate(source.lastApplied))}</p>`:''}${source.lastError?`<p class="finance-bad">${esc(source.lastError)}</p>`:''}</details>`;}
 const workflowSupplierView=vSupplier;vSupplier=function(id){const s=S.cfg.suppliers.find(x=>x.id===id);return workflowSupplierView(id)+(s?workflowSourcePanel(s):'');};
 const workflowSettingsView=vSettings;vSettings=function(){return workflowSettingsView()+`<div class="panel"><h2>Автоматизация описаний</h2><p>После импорта PIM подготавливает описания из полного текста поставщика. Проверенные черновики можно применять автоматически; ручные описания защищены.</p><label class="chk"><input id="workflow-auto-draft" type="checkbox" ${S.cfg.contentEngineAutoDraft?'checked':''}> Обновлять черновики после изменения данных</label><label class="chk"><input id="workflow-auto-content" type="checkbox" ${S.cfg.contentAutoApply?'checked':''}> Применять черновики с полным сохранением фактов и проверенным переводом после импорта</label><p class="small muted">Противоречия и непереведённые фразы остаются в разделе «Проблемы». Автоматическое применение не публикует изменения на сайт.</p><button class="btn" data-act="wfSaveAutomation">Сохранить автоматизацию</button></div>`;};
 vToday=function(){const problems=workflowProblems(),groups=groupsOfQueue().length,count=problems.length+groups,active=[...S.products.values()].filter(p=>!p.archived),variants=active.reduce((n,p)=>n+p.variants.length,0),sources=S.cfg.suppliers.filter(s=>!s.disabled&&s.source?.url);
@@ -9553,7 +9553,7 @@ async function workflowParseSource(download,supplier){const {blob,url}=download;
  const map=profileValid?structuredClone(profile.map):autoMap(headers,supplier.mapping);
  const missing=FIELDS.filter(f=>f.req&&(map[f.k]==null||map[f.k]===''));if(missing.length&&supplier.source?.autoApply)throw Error('Изменилась структура прайса. Проверьте обязательные колонки вручную.');
  // Stage 5.2: the data time of the file (inside it, else its modification time) — never the import time.
- const source_time=sourceFileTime({header,mtime:download.lastModified??null,mtimeSource:download.lastModifiedSource||'FILE',fetchedAt:download.fetchedAt??null,payHours:freshnessPolicy().pay_fresh_hours});
+ const source_time=sourceTimeForSupplier(sourceFileTime({header,mtime:download.lastModified??null,mtimeSource:download.lastModifiedSource||'FILE',fetchedAt:download.fetchedAt??null,payHours:freshnessPolicy().pay_fresh_hours}),supplier);
  return {sup:supplier.id,file:name,wb,sheets,sheet,rows,hdr,map,zero:false,xml:isXml,source_time,sourceId:supplier.id,sourceURLHash:fnvHash(url),sourceHeaders:signature,sourceProfileValid:profileValid};
 }
 function workflowCanFetch(){return !S.snap&&!S.edit&&!S.priceDraft&&!CE_UI.busy&&!S.saving&&!S.imp?.rows&&!WORKFLOW.unsaved;}
@@ -9580,7 +9580,7 @@ async function workflowAction(action,t){
  if(action==='wfProblemPage'){S.ui.workflowPage=Math.max(0,(+S.ui.workflowPage||0)+(+t.dataset.d||0));render();return;}
  if(action==='wfSaveAutomation'){S.cfg.contentEngineAutoDraft=!!$('#workflow-auto-draft').checked;S.cfg.contentAutoApply=!!$('#workflow-auto-content').checked;S.cfgDirty=true;bumpData();await persist();toast('Автоматизация описаний сохранена');return;}
  if(action==='wfSaveSource'){const sid=t.dataset.sid,s=S.cfg.suppliers.find(s=>s.id===sid);if(!s)throw Error('Поставщик не найден.');const panel=$(`[data-source-panel="${CSS.escape(sid)}"]`),url=panel.querySelector('[data-source-url]').value.trim(),hours=Number(panel.querySelector('[data-source-hours]').value),enabled=panel.querySelector('[data-source-enabled]').checked,autoApply=panel.querySelector('[data-source-apply]').checked;
-  if(url)workflowSourceURL(url);if(enabled&&!url)throw Error('Для автопроверки нужна ссылка на прайс.');if(!Number.isInteger(hours)||hours<1||hours>168)throw Error('Интервал должен быть от 1 до 168 часов.');const old=s.source||{},changed=old.url!==url;if(autoApply&&(!old.profile||changed))throw Error('Сначала скачайте и примените первый прайс для подтверждения колонок.');s.source={...old,url,hours,enabled,autoApply};if(changed){delete s.source.profile;delete s.source.lastAttempt;delete s.source.lastError;delete s.source.lastChecked;delete s.source.lastApplied;}S.cfgDirty=true;bumpData();if(await persist()){toast('Источник прайса сохранён');render();}return;
+  if(url)workflowSourceURL(url);if(enabled&&!url)throw Error('Для автопроверки нужна ссылка на прайс.');if(!Number.isInteger(hours)||hours<1||hours>168)throw Error('Интервал должен быть от 1 до 168 часов.');const ignoreHeader=panel.querySelector('[data-source-ignore-header]')?.checked===true;const sizesFromDescription=panel.querySelector('[data-source-sizes-description]')?.checked===true;const old=s.source||{},changed=old.url!==url;if(autoApply&&(!old.profile||changed))throw Error('Сначала скачайте и примените первый прайс для подтверждения колонок.');s.source={...old,url,hours,enabled,autoApply};if(ignoreHeader)s.source_time_ignore_header=true;else delete s.source_time_ignore_header;if(sizesFromDescription)s.sizes_from_description=true;else delete s.sizes_from_description;if(changed){delete s.source.profile;delete s.source.lastAttempt;delete s.source.lastError;delete s.source.lastChecked;delete s.source.lastApplied;}S.cfgDirty=true;bumpData();if(await persist()){toast('Источник прайса сохранён');render();}return;
  }
  if(action==='wfFetchSource'){await workflowFetchSource(t.dataset.sid);return;}
  if(action==='wfRefreshSources'){await workflowRefreshSources(false);return;}
@@ -9611,7 +9611,7 @@ function sourceKyivTime(raw){
 function sourceFileTime({header=null,mtime=null,mtimeSource='FILE',fetchedAt=null,now=Date.now(),payHours=72}={}){
  const valid=t=>t!=null&&t>=SOURCE_TIME_MIN&&t<=now+300000?t:null;
  const h=valid(sourceKyivTime(header)),f=valid(sourceKyivTime(mtime));
- const out={at:null,provenance:'NONE',header:h,mtime:f,warning:null};
+ const out={at:null,provenance:'NONE',header:h,mtime:f,warning:null};if(valid(sourceKyivTime(fetchedAt))!=null)out.fetched=valid(sourceKyivTime(fetchedAt));
  if(h!=null&&(f==null||h<=f+300000)){out.at=h;out.provenance='FILE_HEADER';if(f!=null&&f-h>payHours*3600000)out.warning='HEADER_OLDER_THAN_FILE';}
  else if(f!=null){out.at=f;out.provenance='FILE_MTIME';if(h!=null)out.warning='HEADER_AFTER_FILE';}
  if(header!=null&&header!==''&&h==null)out.warning=out.warning||'HEADER_DATE_INVALID';
@@ -9619,8 +9619,33 @@ function sourceFileTime({header=null,mtime=null,mtimeSource='FILE',fetchedAt=nul
  if(out.provenance==='FILE_MTIME'&&mtimeSource==='HTTP'&&fetchedAt!=null&&Math.abs(fetchedAt-f)<=300000)out.warning=out.warning||'SERVER_TIME_IS_DOWNLOAD_TIME';
  return out;
 }
+// Stage 5.4 (owner decision on M-WIN, 2026-10-17): a supplier whose generator never updates the date inside the file is
+// set to ignore it (supplier.source_time_ignore_header, owner setting, off by default). Its data time is the moment the
+// file was downloaded: the fetch moment for a fetched feed, the saved file's time for a file chosen on this computer.
+// Nothing else changes: without a download time there is no data time (manager only), never the import moment.
+// Review: a supplier generator that serves the same old file again must not make it look fresh — byte-identical rows
+// (content hash) keep the data time of the last applied import of that file (warning FILE_UNCHANGED).
+function sourceTimeForSupplier(t,supplier,contentHash=null){
+ if(!t||supplier?.source_time_ignore_header!==true)return t;
+ const last=supplier.source_time_last,same=contentHash!=null&&last?.hash===contentHash&&last.at!=null,at=same?last.at:t.fetched??t.mtime??null;
+ return {at,provenance:at==null?'NONE':'FILE_MTIME',header:t.header,mtime:t.mtime,...(t.fetched!=null?{fetched:t.fetched}:{}),warning:same?'FILE_UNCHANGED':null,header_ignored:true,...(contentHash!=null?{content_hash:contentHash}:{})};
+}
+function sourceTimeContentHash(I){try{return I?.rows?fnvHash(JSON.stringify(I.rows)):null;}catch{return null;}}
+// The supplier of a file chosen on the ИМПОРТ screen is known only when the import runs (and may be several in one
+// file): each supplier's rows get that supplier's data time from the file's own times, kept unchanged in source_time_file.
+const sourceTimeRunImport=runImport;
+runImport=function(sup){const I=S.imp;if(I?.source_time){I.source_time_file=I.source_time_file||I.source_time;if(sup?.source_time_ignore_header===true&&I.source_time_hash==null)I.source_time_hash=sourceTimeContentHash(I);I.source_time=sourceTimeForSupplier(I.source_time_file,sup,I.source_time_hash);(I.source_time_suppliers||(I.source_time_suppliers={}))[sup.id]=I.source_time;}return sourceTimeRunImport.apply(this,arguments);};
+// The applied import remembers the file (hash) and its data time per supplier that ignores the header.
+const sourceTimeApplyImport=applyImport;
+applyImport=async function(){const I=S.imp,times=I?.source_time_suppliers?{...I.source_time_suppliers}:null,ok=await sourceTimeApplyImport.apply(this,arguments);
+ let remembered=false;if(ok&&times)for(const [id,t] of Object.entries(times)){const s=S.cfg.suppliers.find(x=>x.id===id);if(s?.source_time_ignore_header===true&&t?.content_hash!=null&&t.at!=null){s.source_time_last={hash:t.content_hash,at:t.at};S.cfgDirty=true;remembered=true;}}
+ if(remembered)await persist();return ok;};
+const sourceTimeRemap=remap;
+remap=function(){const out=sourceTimeRemap.apply(this,arguments),I=S.imp;if(I?.source_time){I.source_time_file=I.source_time_file||I.source_time;const sup=S.cfg.suppliers.find(s=>s.id===I.sup);if(sup?.source_time_ignore_header===true&&I.source_time_hash==null)I.source_time_hash=sourceTimeContentHash(I);I.source_time=sourceTimeForSupplier(I.source_time_file,sup,I.source_time_hash);}return out;};
 function sourceFileTimeNote(t){
  if(!t)return '';const day=x=>x==null?'—':new Date(x).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv'});
+ if(t.header_ignored&&t.warning==='FILE_UNCHANGED')return 'Файл не змінився з минулого скачування: час даних залишається '+day(t.at)+' (дата всередині файлу ігнорується за рішенням власника).';
+ if(t.header_ignored)return t.at==null?'Дата всередині файлу ігнорується за рішенням власника; дати скачування файлу немає — на сайті оплата лише після підтвердження менеджера.':'Дані файлу станом на '+day(t.at)+' (дата скачування файлу): дата всередині файлу ігнорується за рішенням власника.';
  if(t.provenance==='NONE')return 'Дата даних файлу невідома — на сайті оплата лише після підтвердження менеджера.';
  const base='Дані файлу станом на '+day(t.at)+(t.provenance==='FILE_HEADER'?' (дата у файлі)':' (дата збереження файлу — це може бути і дата, коли файл завантажили)')+'.';
  if(t.warning==='HEADER_OLDER_THAN_FILE')return base+' Увага: дата у файлі '+day(t.header)+', а файл збережено '+day(t.mtime)+' — постачальник міг не оновити дату або дані застарілі.';
@@ -10103,14 +10128,69 @@ function mcReasons(products){
  if(products.some(p=>p.fieldMeta?.desc?.source==='manual')&&products.some(p=>p.desc!==first.desc))why.push('Различаются ручные описания');
  return uniq(why);
 }
-function mcGroup(products,id){
+// Stage 5.4 (owner: automatic rules first, the rest by hand). A supplier that exports every colour of one model as its own
+// card (one supplier group code per colour, or no codes at all) is the bulk of the model questions. Such cards are one
+// model only on strong, independent evidence; anything weaker stays an owner question:
+//  - colour slices: every card is exactly one public colour, no colour repeats (mcReasons already forbids shared cells,
+//    different attributes, categories, brands, suppliers, manual locks and the variant limit);
+//  - the supplier's own texts agree except for colour words: the full description (200+ characters) and the supplier
+//    category — the only words allowed to differ are the cards' colour/camouflage words (a differing material, class,
+//    size or any other word keeps the cards apart);
+//  - a specific model name (3+ words with a proper name, a quoted name, a Latin word or a number): a generic name
+//    («Футболка Kiborg», «Підсумок під турнікет») never joins on its own;
+//  - and the supplier's grouping agrees: one distinct group code per card, each code covering only cards of this group
+//    (a code shared with a card outside it — M-WIN: one code per colour with its sizes — is the supplier's own model and
+//    wins), or a supplier without codes at all. Only a whole bucket of one name is judged (never a same-size sub-bucket).
+//    Per-m² cards never join (see mcPlan).
+// Generic colour words (whole word forms only: «синтетика», «більше», «серія», «зимова» are not colours). A card's own
+// colour/camouflage names are added per group (mcColourStems).
+const MC_COLOR_WORDS=/^(?:black|olive|coyote|khaki|multicam|tan|grey|gray|green|white|navy|brown|sand|чорн(?:ий|а|е|і|ого|ому|им|ої|ою)?|черн(?:ый|ая|ое|ые|ого)|олив(?:а|и|у|ою|ков(?:ий|а|е|і|ого|ый|ая|ое|ые))?|койот(?:ов(?:ий|а|е|і|ого))?|хак[іи]|мультикам\p{L}*|пікс(?:ель|ельн\p{L}*)|пикс(?:ель|ельн\p{L}*)|сір(?:ий|а|е|і|ого)|сер(?:ый|ая|ое|ые|ого)|зелен(?:ий|а|е|і|ого|ый|ая|ое|ые)|біл(?:ий|а|е|і|ого)|бел(?:ый|ая|ое|ые|ого)|син(?:ій|я|є|і|ього|ий|яя|ее|ие)|коричнев\p{L}*|пісочн\p{L}*|песочн\p{L}*|бежев\p{L}*|камуфляж\p{L}*|червон(?:ий|а|е|і|ого)|красн(?:ый|ая|ое|ые|ого)|жовт(?:ий|а|е|і|ого)|желт(?:ый|ая|ое|ые|ого))$/u;
+function mcWords(text){return String(text||'').toLocaleLowerCase('uk-UA').replace(/ё/g,'е').match(/[\p{L}\p{N}]+/gu)||[];}
+// The cards' own colour/camouflage words: a word of 5+ letters also matches its inflections (stem of 5, at most 3 more
+// letters: «мультикам»→«мультикамний», never «мультифункціональний»); shorter words match only themselves.
+function mcColourStems(products){return uniq(products.flatMap(p=>mcColors(p).flatMap(c=>mcWords([c.color,c.camouflage].filter(Boolean).join(' '))))).filter(w=>w.length>=3&&!/^\d+$/u.test(w));}
+function mcColourWord(w,own){return MC_COLOR_WORDS.test(w)||own.some(c=>w===c||c.length>=5&&w.startsWith(c.slice(0,5))&&w.length-c.length<=3&&w.length>=c.length-2);}
+// True when two texts are the same once colour words are set aside (multiset of words, order kept by the supplier).
+function mcSameExceptColours(a,b,stems){
+ const count=list=>{const m=new Map();for(const w of list)m.set(w,(m.get(w)||0)+1);return m;},A=count(mcWords(a)),B=count(mcWords(b)),diff=[];
+ for(const w of new Set([...A.keys(),...B.keys()])){const n=Math.abs((A.get(w)||0)-(B.get(w)||0));if(n)diff.push(w);}
+ return diff.length<=4&&diff.every(w=>mcColourWord(w,stems));
+}
+function mcSpecificName(name,brand=''){
+ const brandWords=new Set(mcWords(brand)),words=mcWords(name).filter(w=>!MC_COLOR_WORDS.test(w)&&!brandWords.has(w));if(words.length<3)return false;
+ // The brand is not a model name: «Футболка тактична Kiborg» (brand Kiborg) is still generic.
+ const raw=mcWords(name).filter(w=>!brandWords.has(w)).length===mcWords(name).length?String(name||''):String(name||'').split(/\s+/u).filter(w=>!mcWords(w).some(x=>brandWords.has(x))).join(' ');return /[«"„“][^«"„“»”]{2,}[»"”“]/u.test(raw)||/[a-z]{3,}/i.test(raw)||/\d/.test(raw)||raw.split(/\s+/).slice(1).some(w=>/^\p{Lu}\p{Ll}{2,}/u.test(w));
+}
+// Active cards per supplier group code (supplier id + code): built once per data version.
+const mcCodeOwners=memoByData(function(){const m=new Map();for(const p of S.products.values()){if(p.archived||p.merged_into)continue;const sids=uniq((p.variants||[]).flatMap(v=>Object.keys(v.offers||{})));for(const c of mcIdentity(p).codes)for(const sid of sids){const k=sid+'\u0000'+c;if(!m.has(k))m.set(k,new Set());m.get(k).add(p.id);}}return m;});
+function mcColourSliceRule(products,id){
+ // One supplier only (codes and categories are that supplier's), a specific name without the brand.
+ if(id.suppliers.length!==1||!mcSpecificName(id.name,products[0].brand||''))return null;
+ // Every card is exactly one real colour (a colourless card is not a colour slice), no colour repeats.
+ const colours=products.map(p=>mcColors(p));if(products.length<2||colours.some(c=>c.length!==1||!c[0].key.replace(/\|/gu,''))||new Set(colours.map(c=>c[0].key)).size!==products.length)return null;
+ if(products.some(p=>(p.variants||[]).some(finalUnitPriced)))return null;
+ const stems=mcColourStems(products),text=p=>ceSourcePlain(simpleSource(p)),first=text(products[0]);if(norm(first).length<200)return null;
+ if(!products.every(p=>mcSameExceptColours(text(p),first,stems)))return null;
+ const rcat=p=>uniq((p.variants||[]).flatMap(v=>Object.values(v.offers||{}).map(o=>String(o.supplier_category_raw??o.rcat??'')))).join(' | ');
+ if(products.some(p=>!norm(rcat(p)))||!products.every(p=>mcSameExceptColours(rcat(p),rcat(products[0]),stems)))return null;
+ const codes=products.map(p=>mcIdentity(p).codes);
+ if(codes.every(c=>c.length===1)&&new Set(codes.map(c=>c[0])).size===products.length){
+  const ids=new Set(products.map(p=>p.id)),owners=mcCodeOwners();
+  for(const c of codes)for(const sid of id.suppliers)for(const other of owners.get(sid+'\u0000'+c[0])||[])if(!ids.has(other))return null;
+  return 'colour-slices-supplier-codes';
+ }
+ if(codes.every(c=>!c.length))return 'colour-slices-specific-name';
+ return null;
+}
+function mcGroup(products,id,{sliceRule=false}={}){
  const reasons=mcReasons(products),latin=uniq((id.name.match(/[a-z][a-z0-9-]{2,}/gi)||[]).map(norm).filter(t=>!['tactical','pouch','jacket','pants','black','olive','multicam','shirt','pack','double','mag','winter','softshell'].includes(t))),desc=p=>norm(mcClean(ceSourcePlain(simpleSource(p)),p)),sameDescription=desc(products[0]).length>=200&&products.every(p=>desc(p)===desc(products[0]));
- const strong=!reasons.length&&(id.codes.length===1&&products.every(p=>mcIdentity(p).codes[0]===id.codes[0])||latin.length>=3&&sameDescription);
- return {key:id.key,name:id.name,ids:products.map(p=>p.id).sort(),variants:products.reduce((n,p)=>n+p.variants.length,0),colors:uniq(products.flatMap(p=>mcColors(p).map(c=>c.key))).length,automatic:strong,reasons:reasons.length?reasons:strong?[]:['Название похоже, но код модели или полное совпадение источника не подтверждены']};
+ const rule=reasons.length?null:id.codes.length===1&&products.every(p=>mcIdentity(p).codes[0]===id.codes[0])?'supplier-model-code':latin.length>=3&&sameDescription?'latin-name-same-description':sliceRule?mcColourSliceRule(products,id):null;
+ const strong=!!rule;
+ return {key:id.key,name:id.name,ids:products.map(p=>p.id).sort(),variants:products.reduce((n,p)=>n+p.variants.length,0),colors:uniq(products.flatMap(p=>mcColors(p).map(c=>c.key))).length,automatic:strong,...(rule?{rule}:{}),reasons:reasons.length?reasons:strong?[]:['Название похоже, но код модели или полное совпадение источника не подтверждены']};
 }
 const mcPlan=memoByData(function(){
  const buckets=new Map();for(const p of S.products.values()){if(p.archived||p.merged_into||!p.variants?.length||p.model_grouping_locked)continue;const id=mcIdentity(p);if(!buckets.has(id.key))buckets.set(id.key,[]);buckets.get(id.key).push(p);}
- const groups=[];for(const products of buckets.values()){if(products.length<2)continue;const group=mcGroup(products,mcIdentity(products[0]));groups.push(group);
+ const groups=[];for(const products of buckets.values()){if(products.length<2)continue;const group=mcGroup(products,mcIdentity(products[0]),{sliceRule:true});groups.push(group);
   // Without the whole size family proven, the cards of one size (title still naming it) are judged on their own.
   if(!group.automatic){const exact=new Map();for(const p of products){const k=mcIdentity(p,{keepSize:true}).key;if(!exact.has(k))exact.set(k,[]);exact.get(k).push(p);}
    const used=new Set();if(exact.size>1)for(const part of exact.values())if(part.length>1){const sub=mcGroup(part,mcIdentity(part[0],{keepSize:true}));if(sub.automatic){groups.push(sub);sub.ids.forEach(id=>used.add(id));}}
@@ -10129,7 +10209,7 @@ function mcMergeGroup(group,{manual=false}={}){
  for(const p of products)touchP(p.id);
  survivor.model_color_sources=[...(survivor.model_color_sources||[]),...sources];survivor.model_source_ids=uniq([...(survivor.model_source_ids||[]),...products.flatMap(p=>p.model_source_ids||[p.id])]);survivor.model_name=group.name;survivor.model_colors_version=1;
  for(const p of products)if(p!==survivor){survivor.variants.push(...p.variants);p.variants=[];p.merged_into=survivor.id;p.pub=false;p.archived=true;p.archiveReason='MODEL: объединена с '+survivor.id;delete p.simple_excluded_reason;markProduct(p);}
- modelAudit(survivor,{source_products:before},{model:survivor.id,colors:mcColors(survivor).length,source_products:survivor.model_source_ids},'Одна модель → цвета → варианты',manual?'manual':'automatic');markProduct(survivor);return {id:survivor.id,merged_ids:oldIds,variants:survivor.variants.length};
+ if(!manual&&group.rule)survivor.model_merge_rule=group.rule;modelAudit(survivor,{source_products:before},{model:survivor.id,colors:mcColors(survivor).length,source_products:survivor.model_source_ids},'Одна модель → цвета → варианты',manual?'manual':'automatic');markProduct(survivor);return {id:survivor.id,merged_ids:oldIds,variants:survivor.variants.length};
 }
 function mcMigrate(groups=mcPlan().automatic){const results=groups.map(g=>mcMergeGroup(g));S.cfg.model_colors_version=1;S.cfgDirty=true;rebuildIndex();bumpData();return results;}
 function mcResolveId(id){const seen=new Set();while(S.products.get(id)?.merged_into&&!seen.has(id)){seen.add(id);id=S.products.get(id).merged_into;}return id;}
@@ -10187,7 +10267,7 @@ function classificationSources(p){return (p.variants||[]).flatMap(v=>Object.entr
 // Supplier facts for evidence: the card's supplier description, else the description each supplier offer carries
 // (after a clean import the text lives on the offers; the publication path already reads it the same way).
 function classificationSupplierDescription(p){return ceSupplierSource(p)||p.source_description||p.desc||(p.variants||[]).flatMap(v=>Object.values(v.offers||{}).map(o=>String(o.source_description||''))).find(s=>s.trim())||'';}
-function classificationDecision(p){
+function classificationDecisionBase(p){
  const id=p.canonical_category_id||p.last_confirmed_category_id||categoryIdForPath(p.category);
  if(classificationLocked(p,'category')||classificationLocked(p,'canonical_category_id')||classificationLocked(p,'primary_product_type'))return {tier:'SAFE_AUTO',category:id,rule_id:'manual-lock',reason:'Ручне рішення збережене.',protected:true};
  const gathered=classificationSources(p),sources=gathered.length?gathered:p.category_sources||[],dto={...p,name:p.name,description:classificationSupplierDescription(p),attrs:p.attrs,sources};
@@ -10205,6 +10285,48 @@ function classificationDecision(p){
   return {tier:proven?'SAFE_AUTO':'LIKELY',category:ids[0],rule_id:'canonical-whole-item-corroborated',reason:proven?'Тип виробу підтверджений заголовками та незалежними фактами постачальника.':'Недостатньо незалежних source facts.',evidence:{supplier_titles:sources.map(s=>s.original_name)}};
  }
  return {...evidence,tier:ids.length===1?'LIKELY':evidence.tier,category:evidence.category||ids[0]||null};
+}
+// Stage 5.4 (owner: automatic rules first, only high confidence). «Supplier category consensus»: inside ONE supplier
+// category of ONE supplier, at least CATEGORY_CONSENSUS.min products were confirmed (SAFE_AUTO) by independent evidence
+// and at least CATEGORY_CONSENSUS.share of them landed in one canonical category; a LIKELY/AMBIGUOUS product of that
+// supplier category whose own dictionary suggestion IS that category (and whose title alone does not point to another
+// confirmed category) is then confirmed the same way. Both the dictionary and the supplier's own category agree; a
+// supplier category that mixes product types never reaches the share. Computed only after an import, from decisions
+// made without this rule (no rule feeds itself); manual locks and confirmed mappings are never touched.
+const CATEGORY_CONSENSUS={min:10,share:0.95};let categoryConsensusMap=null;
+function categoryConsensusKey(s){return (s.supplier_id||'')+'\u0000'+norm(s.supplier_category_raw||'')+'\u0000'+norm(s.supplier_category_path_raw||'');}
+function categoryConsensusBuild(){
+ const counts=new Map();
+ for(const p of S.products.values()){if(p.archived||p.merged_into||p.category_confidence_tier!=='SAFE_AUTO'||!p.canonical_category_id||p.category_rule_id==='supplier-category-consensus')continue;
+  for(const k of new Set(classificationSources(p).filter(s=>norm(s.supplier_category_raw||'')).map(categoryConsensusKey))){if(!counts.has(k))counts.set(k,new Map());const c=counts.get(k);c.set(p.canonical_category_id,(c.get(p.canonical_category_id)||0)+1);}}
+ const out=new Map();for(const [k,c] of counts){const total=[...c.values()].reduce((a,b)=>a+b,0),[top,n]=[...c.entries()].sort((a,b)=>b[1]-a[1])[0];out.set(k,{category:top,count:n,total});}
+ return out;
+}
+function categoryConsensusDecision(p,r){
+ // LIKELY only: an AMBIGUOUS suggestion may be one arbitrary candidate among conflicting ones (left to the owner).
+ if(!categoryConsensusMap||!r.category||r.protected||r.tier!=='LIKELY')return null;
+ // No supplier category = no supplier evidence (an empty category would pool unrelated products).
+ const sources=classificationSources(p);if(!sources.length||sources.some(s=>!norm(s.supplier_category_raw||'')))return null;
+ const support=sources.map(s=>categoryConsensusMap.get(categoryConsensusKey(s)));
+ if(support.some(x=>!x||x.category!==r.category||x.total<CATEGORY_CONSENSUS.min||x.count/x.total<CATEGORY_CONSENSUS.share))return null;
+ const own=RubizhCategories.classify({name:p.name,original_name:p.name},categoryOptions());if(own.canonical_category_id&&own.canonical_category_id!==r.category&&own.category_status==='CONFIRMED')return null;
+ return {tier:'SAFE_AUTO',category:r.category,rule_id:'supplier-category-consensus',reason:'Категорія постачальника: '+support.map(x=>x.count+' з '+x.total).join(', ')+' підтверджених товарів у цій категорії; словник пропонує ту саму.',evidence:{previous_tier:r.tier,previous_rule:r.rule_id,supplier_categories:sources.map(s=>s.supplier_category_raw||''),consensus:support}};
+}
+function classificationDecision(p){const r=classificationDecisionBase(p);return categoryConsensusDecision(p,r)||r;}
+// Re-judges the open category questions with the consensus of the whole catalog (after each import). Returns how many it confirmed.
+function categoryConsensusPass(){
+ if(!classificationEnabled()||classificationReviewMode())return 0;
+ categoryConsensusMap=categoryConsensusBuild();let n=0;
+ try{for(const p of S.products.values()){if(p.archived||p.merged_into)continue;
+   // An earlier consensus confirmation is re-judged too: it lapses (back to the owner) when its evidence is gone.
+   const earlier=p.category_rule_id==='supplier-category-consensus'&&p.category_confidence_tier==='SAFE_AUTO';
+   if(!earlier&&!(p.classification_exceptions||[]).some(e=>e.kind==='category'&&e.status==='OPEN'))continue;
+   const r=categoryConsensusDecision(p,classificationDecisionBase(p));if(!r&&!earlier)continue;
+   if(r&&earlier)continue;
+   if(!r){const map=categoryConsensusMap;categoryConsensusMap=null;try{delete p.classification_input_fingerprint;delete p.category_rule_id;classificationApplyProduct(p);}finally{categoryConsensusMap=map;}continue;}
+   delete p.classification_input_fingerprint;classificationApplyProduct(p);if(p.category_rule_id==='supplier-category-consensus')n++;}}
+ finally{categoryConsensusMap=null;}
+ if(n)bumpData();return n;
 }
 const classificationPreviousDecision=categoryDecisionForProduct;
 categoryDecisionForProduct=function(p,...args){
@@ -10445,6 +10567,7 @@ runImport=function(sup,rows,hdr,map,opts={}){
  try{S._classificationSupplier=sup;result=classificationImport(sup,rows,hdr,map,{...opts,zeroMissing:classificationEnabled()?false:opts.zeroMissing});}finally{S._classificationSupplier=previousSupplier;}
  const touched=[...S.products.values()].filter(p=>p.variants.some(v=>v.offers?.[sup.id]?.at===result.at));
  for(const p of touched){if(contentBefore?.has(p.id)){const old=contentBefore.get(p.id);for(const k of ['name','desc','attrs','photos','photoMeta','fieldMeta','translated_description_uk','source_description'])if(Object.hasOwn(old,k))p[k]=old[k];else delete p[k];}classificationApplyProduct(p);}
+ bumpData();result.category_consensus=categoryConsensusPass();
  // MODEL → COLOR after classification: sizes proven only now (e.g. approved net grid W×H) let the size cards of one
  // supplier model merge in the same import; merged survivors are re-classified.
  if(typeof mcEnabled==='function'&&mcEnabled()&&!classificationReviewMode()){const ids=new Set(touched.map(p=>p.id));bumpData();for(const r of mcMigrate(mcPlan().automatic.filter(g=>g.ids.some(id=>ids.has(id))))){const survivor=S.products.get(r.id);if(survivor)classificationApplyProduct(survivor);}}
@@ -10741,6 +10864,9 @@ function finalSizeLabels(p){
 }
 // Supplier price per unit area (made-to-measure nets: «індивідуальний розмір», «ціна за 1 кв.м»): not an item price.
 const FINAL_UNIT_PRICE=/(?:ціна|цена)\s+за\s+(?:1\s*)?(?:кв\.?\s*м|м2|м²|квадратн)|індивідуальн\S*\s+розмір|индивидуальн\S*\s+размер/iu;
+// The unit is m² only when the supplier says «ціна за (1) кв.м / м²»; «індивідуальний розмір» alone is a QUOTE without a unit.
+const FINAL_AREA_PRICE=/(?:ціна|цена)\s+за\s+(?:1\s*)?(?:кв\.?\s*м|м2|м²|квадратн)/iu;
+function finalAreaPriced(v){return Object.values(v.offers||{}).some(o=>FINAL_AREA_PRICE.test(String(o.source_name||o.original_name||''))||Object.values(o.source_attributes||{}).some(x=>FINAL_AREA_PRICE.test(String(x))));}
 function finalUnitPriced(v){return Object.values(v.offers||{}).some(o=>FINAL_UNIT_PRICE.test(String(o.source_name||o.original_name||''))||Object.values(o.source_attributes||{}).some(x=>FINAL_UNIT_PRICE.test(String(x))));}
 // What the site shows for one SKU: colour + size label (NO_SIZE_REQUIRED shows none). Two SKUs with the same public cell
 // cannot be told apart by a buyer, so such a model is never READY.
@@ -10766,9 +10892,15 @@ const finalDecision=memoProd('final-decision',function(p){
  const openCategory=(p.classification_exceptions||[]).some(e=>e.kind==='category'&&e.status==='OPEN');
  if(!p.canonical_category_id||openCategory)add(moderate,'category',FINAL_MODERATION_TEXT.category[1],[p.category_review_status||'NEEDS_REVIEW',p.suggested_category_id?'Предложено: '+canonicalPath(p.suggested_category_id):''].filter(Boolean));
  if(variants.length>modelLimit(p)||finalModelReview().has(p.id))add(moderate,'grouping',FINAL_MODERATION_TEXT.grouping[1],[variants.length+' SKU']);
+ // Stage 5.4 (owner decision on UKR-TEC): a supplier set to take sizes from the description and characteristics
+ // (supplier.sizes_from_description) has no size column; a sized product of it for which neither its SKU size nor the
+ // model's sizes were found stays «розмір уточнюється» and goes to the owner (other suppliers: unchanged).
+ const sizeSuppliers=new Set((S.cfg.suppliers||[]).filter(s=>s.sizes_from_description===true).map(s=>s.id));
+ if(sizeSuppliers.size){const missing=variants.filter(v=>Object.keys(v.offers||{}).some(id=>sizeSuppliers.has(id))&&v.size_status!=='NO_SIZE_REQUIRED'&&v.size_confidence_tier!=='SAFE_AUTO');if(missing.length)add(moderate,'size',FINAL_MODERATION_TEXT.size[1],missing.slice(0,5).map(v=>v.sku));}
  const unknownColors=uniq(variants.flatMap(v=>simplePalette(v).unknown));if(unknownColors.length)add(moderate,'color',FINAL_MODERATION_TEXT.color[1],unknownColors.slice(0,5));
  if(classificationEnabled()||mcEnabled()){const colors=finalUsableColors(p,mcColors(p));if(colors.length>1&&colors.some(c=>!c.photos.length))add(moderate,'photo_ownership',FINAL_MODERATION_TEXT.photo_ownership[1],colors.filter(c=>!c.photos.length).map(c=>[c.color,c.camouflage].filter(Boolean).join(' / ')||c.id));}
- const unitPriced=variants.filter(finalUnitPriced);if(unitPriced.length)add(moderate,'price_unit',FINAL_MODERATION_TEXT.price_unit[1],unitPriced.slice(0,5).map(v=>v.sku));
+ // Stage 5.4 (owner decision): a per-m² SKU is no longer an owner question — it is published as a manager QUOTE (no cart,
+ // no payment, «Розрахувати вартість» → wholesale request D-54); see finalWireProduct.
  const sameTitle=(finalTitleOwners().get((p.canonical_category_id||'')+'\u0000'+norm(finalTitle(p)))||[]).filter(id=>id!==p.id);if(sameTitle.length)add(moderate,'grouping',FINAL_MODERATION_TEXT.grouping[1],['Та сама назва: '+sameTitle.slice(0,3).join(', ')]);
  const publicCells=finalPublicCells(p),cells=new Map(),same=[];for(const v of variants){const k=publicCells.get(v.sku);if(cells.has(k))same.push(cells.get(k),v.sku);else cells.set(k,v.sku);}
  if(same.length)add(moderate,'variant_cell',FINAL_MODERATION_TEXT.variant_cell[1],uniq(same).slice(0,6));
@@ -10820,18 +10952,27 @@ function finalWireProduct(p){
   // Private shipment routing for the SITE server (never public): the offer that prices this SKU.
   const local=p.variants.find(x=>x.sku===v.sku),c=local?calc(p,local):null,o=c?.o||c?.ref,sid=o?.sid||'';
   v.fulfillment_supplier_id=sid;v.fulfillment_supplier=sid?supName(sid):'';v.fulfillment_supplier_sku=String(o?.s||'');}
+ // Stage 5.4 (owner decision): a supplier price per m² (made-to-measure) is shown on the site without the cart: sale_mode
+ // QUOTE + price_unit m2 (additive variant fields, SITE quote_sale_version 1). Never orderable or payable through the cart;
+ // a model of QUOTE SKU only offers no size requests either. The m² price is the PIM price of one m².
+ const quote=new Set(p.variants.filter(finalUnitPriced).map(v=>v.sku)),area=new Set(p.variants.filter(finalAreaPriced).map(v=>v.sku));
+ for(const v of out.variants)if(quote.has(v.sku)){v.sale_mode='QUOTE';v.price_unit=area.has(v.sku)?'m2':null;v.order_submission_allowed=false;v.payment_allowed=false;v.requires_order_confirmation=true;}
+ if(quote.size)out.size_options=[];
+ if(quote.size&&out.variants.every(v=>v.sale_mode==='QUOTE')){out.order_submission_allowed=false;out.payment_allowed=false;out.requires_order_confirmation=true;}
  for(const k of ['availability_label','legacy_attributes','quality_score'])delete out[k];
  return out;
 }
 function finalExplicitHideIds(published){
  return Object.keys(published||{}).filter(id=>{const p=S.products.get(id);return p&&(p.archived||finalOwnerUnpublished(p)||finalDecision(p).state!=='READY');}).sort();
 }
-function pimSiteWire({published={}}={}){
+function finalQuoteModel(p){return (p.variants||[]).some(finalUnitPriced);}
+function pimSiteWire({published={},quoteSale=false}={}){
  if(!classificationEnabled())throw Error('CONTRACT_V3_REQUIRES_CLASSIFICATION: сначала выполните импорт с классификацией');
  if(!pricingProtected())throw Error('PRICING_POLICY_V1_REQUIRED');
- const products=[...S.products.values()].filter(p=>finalDecision(p).state==='READY').sort((a,b)=>a.id.localeCompare(b.id)).map(finalWireProduct);
+ // A SITE without quote_sale_version 1 would show a QUOTE model as unavailable: such models are not sent to it.
+ const products=[...S.products.values()].filter(p=>finalDecision(p).state==='READY'&&(quoteSale||!finalQuoteModel(p))).sort((a,b)=>a.id.localeCompare(b.id)).map(finalWireProduct);
  const categories=categoryPublicCatalogue();
- return {contract_version:3,version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,pim_version:PIM_VERSION,currency:'UAH',generated_at:new Date().toISOString(),catalog_revision:fnvHash(stableValue105(products.map(finalModelHash))),category_catalog_hash:fnvHash(JSON.stringify(categories)),categories,products,hide_ids:finalExplicitHideIds(published)};
+ return {contract_version:3,version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,pim_version:PIM_VERSION,currency:'UAH',generated_at:new Date().toISOString(),catalog_revision:fnvHash(stableValue105(products.map(finalModelHash))),category_catalog_hash:fnvHash(JSON.stringify(categories)),categories,products,hide_ids:uniq([...finalExplicitHideIds(published),...(quoteSale?[]:Object.keys(published||{}).filter(id=>{const p=S.products.get(id);return p&&finalQuoteModel(p);}))]).sort()};
 }
 // OD-4.1 (stage 5): the supplier payout per SKU for CRM gross profit — a separate PRIVATE contract
 // (rubizh-pim-private-costs v1, SITE POST /api/pim/costs). Never part of pimSiteWire()/buildFeed(); no supplier names.
@@ -10977,7 +11118,7 @@ async function finalPublish({allowStale=false}={}){
  if(!finalCapabilitiesOk(status.capabilities))throw Error('SYNC_DISABLED: сайт не подтвердил contract v3 (contract/pricing/category/size/inventory/order versions). Передача остановлена.');
  if(Number(status.capabilities?.freshness_policy_version)!==1)throw Error('SYNC_DISABLED: сайт не применяет правило свежести данных поставщиков (freshness_policy v1). Обновите сайт. Передача остановлена.');
  const published=await Store.get('site/v3/published')||{},hashes=await Store.get('site/v3/hashes')||{};
- const wire=pimSiteWire({published:Object.fromEntries(Object.entries(published).filter(([,x])=>!x.hidden))});
+ const wire=pimSiteWire({published:Object.fromEntries(Object.entries(published).filter(([,x])=>!x.hidden)),quoteSale:Number(status.capabilities?.quote_sale_version)===1});
  const items=wire.products.map(p=>({p,h:finalModelHash(p)})),changed=items.filter(o=>hashes[o.p.id]!==o.h),catsChanged=S.cfg.siteV3CatHash!==wire.category_catalog_hash;
  // Stage 5.1: the owner's freshness thresholds travel with chunk 0; a changed policy alone is worth a batch.
  const freshness=freshnessPolicy(),freshnessChanged=stableValue105(S.cfg.siteFreshnessPolicy||null)!==stableValue105(freshness);

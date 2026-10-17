@@ -1,7 +1,7 @@
 'use strict';
 // Stage 5.2 rehearsal: shared pieces (private outputs only). The settings that must survive reset/backup/restore, the
 // per-supplier quality view of a catalog and anonymous-safe examples for owner decisions (names and reasons only).
-const SETTINGS=`JSON.stringify({categories:(S.cfg.canonical_categories||[]).length,suppliers:S.cfg.suppliers.map(s=>({id:s.id,name:s.name,auto:s.auto,priority:s.priority,terms:s.terms,mapping:s.mapping,fulfillment:s.fulfillment,inventory_policy:s.inventory_policy||null})),
+const SETTINGS=`JSON.stringify({categories:(S.cfg.canonical_categories||[]).length,suppliers:S.cfg.suppliers.map(s=>({id:s.id,name:s.name,auto:s.auto,priority:s.priority,terms:s.terms,mapping:s.mapping,fulfillment:s.fulfillment,inventory_policy:s.inventory_policy||null,source_time_ignore_header:s.source_time_ignore_header,sizes_from_description:s.sizes_from_description})),
  catMap:S.cfg.catMap,catRules:S.cfg.catRules,colorMap:S.cfg.colorMap,sizeMap:S.cfg.sizeMap,brandMap:S.cfg.brandMap,supplierAliases:S.cfg.supplierAliases,supplier_category_mapping:S.cfg.supplier_category_mapping||null,
  pricing:[S.cfg.pricing_policy_version,S.cfg.minMargin,S.cfg.bigPriceFrom,S.cfg.bigPriceMargin,S.cfg.kitMargin,S.cfg.discountMarginFloor,S.cfg.donPct,S.cfg.donCapPct,S.cfg.taxPct,S.cfg.acquiringPct,S.cfg.round,S.cfg.roundMode,S.cfg.tiers,S.cfg.defaultMarkup,S.cfg.rules],
  freshness:freshnessPolicy(),inventory_policy_version:S.cfg.inventory_policy_version,classification_version:S.cfg.classification_version,model_colors_version:S.cfg.model_colors_version,autoprices_enabled:S.cfg.autoprices_enabled===true})`;

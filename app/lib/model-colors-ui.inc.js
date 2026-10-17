@@ -54,14 +54,69 @@ function mcReasons(products){
  if(products.some(p=>p.fieldMeta?.desc?.source==='manual')&&products.some(p=>p.desc!==first.desc))why.push('Различаются ручные описания');
  return uniq(why);
 }
-function mcGroup(products,id){
+// Stage 5.4 (owner: automatic rules first, the rest by hand). A supplier that exports every colour of one model as its own
+// card (one supplier group code per colour, or no codes at all) is the bulk of the model questions. Such cards are one
+// model only on strong, independent evidence; anything weaker stays an owner question:
+//  - colour slices: every card is exactly one public colour, no colour repeats (mcReasons already forbids shared cells,
+//    different attributes, categories, brands, suppliers, manual locks and the variant limit);
+//  - the supplier's own texts agree except for colour words: the full description (200+ characters) and the supplier
+//    category — the only words allowed to differ are the cards' colour/camouflage words (a differing material, class,
+//    size or any other word keeps the cards apart);
+//  - a specific model name (3+ words with a proper name, a quoted name, a Latin word or a number): a generic name
+//    («Футболка Kiborg», «Підсумок під турнікет») never joins on its own;
+//  - and the supplier's grouping agrees: one distinct group code per card, each code covering only cards of this group
+//    (a code shared with a card outside it — M-WIN: one code per colour with its sizes — is the supplier's own model and
+//    wins), or a supplier without codes at all. Only a whole bucket of one name is judged (never a same-size sub-bucket).
+//    Per-m² cards never join (see mcPlan).
+// Generic colour words (whole word forms only: «синтетика», «більше», «серія», «зимова» are not colours). A card's own
+// colour/camouflage names are added per group (mcColourStems).
+const MC_COLOR_WORDS=/^(?:black|olive|coyote|khaki|multicam|tan|grey|gray|green|white|navy|brown|sand|чорн(?:ий|а|е|і|ого|ому|им|ої|ою)?|черн(?:ый|ая|ое|ые|ого)|олив(?:а|и|у|ою|ков(?:ий|а|е|і|ого|ый|ая|ое|ые))?|койот(?:ов(?:ий|а|е|і|ого))?|хак[іи]|мультикам\p{L}*|пікс(?:ель|ельн\p{L}*)|пикс(?:ель|ельн\p{L}*)|сір(?:ий|а|е|і|ого)|сер(?:ый|ая|ое|ые|ого)|зелен(?:ий|а|е|і|ого|ый|ая|ое|ые)|біл(?:ий|а|е|і|ого)|бел(?:ый|ая|ое|ые|ого)|син(?:ій|я|є|і|ього|ий|яя|ее|ие)|коричнев\p{L}*|пісочн\p{L}*|песочн\p{L}*|бежев\p{L}*|камуфляж\p{L}*|червон(?:ий|а|е|і|ого)|красн(?:ый|ая|ое|ые|ого)|жовт(?:ий|а|е|і|ого)|желт(?:ый|ая|ое|ые|ого))$/u;
+function mcWords(text){return String(text||'').toLocaleLowerCase('uk-UA').replace(/ё/g,'е').match(/[\p{L}\p{N}]+/gu)||[];}
+// The cards' own colour/camouflage words: a word of 5+ letters also matches its inflections (stem of 5, at most 3 more
+// letters: «мультикам»→«мультикамний», never «мультифункціональний»); shorter words match only themselves.
+function mcColourStems(products){return uniq(products.flatMap(p=>mcColors(p).flatMap(c=>mcWords([c.color,c.camouflage].filter(Boolean).join(' '))))).filter(w=>w.length>=3&&!/^\d+$/u.test(w));}
+function mcColourWord(w,own){return MC_COLOR_WORDS.test(w)||own.some(c=>w===c||c.length>=5&&w.startsWith(c.slice(0,5))&&w.length-c.length<=3&&w.length>=c.length-2);}
+// True when two texts are the same once colour words are set aside (multiset of words, order kept by the supplier).
+function mcSameExceptColours(a,b,stems){
+ const count=list=>{const m=new Map();for(const w of list)m.set(w,(m.get(w)||0)+1);return m;},A=count(mcWords(a)),B=count(mcWords(b)),diff=[];
+ for(const w of new Set([...A.keys(),...B.keys()])){const n=Math.abs((A.get(w)||0)-(B.get(w)||0));if(n)diff.push(w);}
+ return diff.length<=4&&diff.every(w=>mcColourWord(w,stems));
+}
+function mcSpecificName(name,brand=''){
+ const brandWords=new Set(mcWords(brand)),words=mcWords(name).filter(w=>!MC_COLOR_WORDS.test(w)&&!brandWords.has(w));if(words.length<3)return false;
+ // The brand is not a model name: «Футболка тактична Kiborg» (brand Kiborg) is still generic.
+ const raw=mcWords(name).filter(w=>!brandWords.has(w)).length===mcWords(name).length?String(name||''):String(name||'').split(/\s+/u).filter(w=>!mcWords(w).some(x=>brandWords.has(x))).join(' ');return /[«"„“][^«"„“»”]{2,}[»"”“]/u.test(raw)||/[a-z]{3,}/i.test(raw)||/\d/.test(raw)||raw.split(/\s+/).slice(1).some(w=>/^\p{Lu}\p{Ll}{2,}/u.test(w));
+}
+// Active cards per supplier group code (supplier id + code): built once per data version.
+const mcCodeOwners=memoByData(function(){const m=new Map();for(const p of S.products.values()){if(p.archived||p.merged_into)continue;const sids=uniq((p.variants||[]).flatMap(v=>Object.keys(v.offers||{})));for(const c of mcIdentity(p).codes)for(const sid of sids){const k=sid+'\u0000'+c;if(!m.has(k))m.set(k,new Set());m.get(k).add(p.id);}}return m;});
+function mcColourSliceRule(products,id){
+ // One supplier only (codes and categories are that supplier's), a specific name without the brand.
+ if(id.suppliers.length!==1||!mcSpecificName(id.name,products[0].brand||''))return null;
+ // Every card is exactly one real colour (a colourless card is not a colour slice), no colour repeats.
+ const colours=products.map(p=>mcColors(p));if(products.length<2||colours.some(c=>c.length!==1||!c[0].key.replace(/\|/gu,''))||new Set(colours.map(c=>c[0].key)).size!==products.length)return null;
+ if(products.some(p=>(p.variants||[]).some(finalUnitPriced)))return null;
+ const stems=mcColourStems(products),text=p=>ceSourcePlain(simpleSource(p)),first=text(products[0]);if(norm(first).length<200)return null;
+ if(!products.every(p=>mcSameExceptColours(text(p),first,stems)))return null;
+ const rcat=p=>uniq((p.variants||[]).flatMap(v=>Object.values(v.offers||{}).map(o=>String(o.supplier_category_raw??o.rcat??'')))).join(' | ');
+ if(products.some(p=>!norm(rcat(p)))||!products.every(p=>mcSameExceptColours(rcat(p),rcat(products[0]),stems)))return null;
+ const codes=products.map(p=>mcIdentity(p).codes);
+ if(codes.every(c=>c.length===1)&&new Set(codes.map(c=>c[0])).size===products.length){
+  const ids=new Set(products.map(p=>p.id)),owners=mcCodeOwners();
+  for(const c of codes)for(const sid of id.suppliers)for(const other of owners.get(sid+'\u0000'+c[0])||[])if(!ids.has(other))return null;
+  return 'colour-slices-supplier-codes';
+ }
+ if(codes.every(c=>!c.length))return 'colour-slices-specific-name';
+ return null;
+}
+function mcGroup(products,id,{sliceRule=false}={}){
  const reasons=mcReasons(products),latin=uniq((id.name.match(/[a-z][a-z0-9-]{2,}/gi)||[]).map(norm).filter(t=>!['tactical','pouch','jacket','pants','black','olive','multicam','shirt','pack','double','mag','winter','softshell'].includes(t))),desc=p=>norm(mcClean(ceSourcePlain(simpleSource(p)),p)),sameDescription=desc(products[0]).length>=200&&products.every(p=>desc(p)===desc(products[0]));
- const strong=!reasons.length&&(id.codes.length===1&&products.every(p=>mcIdentity(p).codes[0]===id.codes[0])||latin.length>=3&&sameDescription);
- return {key:id.key,name:id.name,ids:products.map(p=>p.id).sort(),variants:products.reduce((n,p)=>n+p.variants.length,0),colors:uniq(products.flatMap(p=>mcColors(p).map(c=>c.key))).length,automatic:strong,reasons:reasons.length?reasons:strong?[]:['Название похоже, но код модели или полное совпадение источника не подтверждены']};
+ const rule=reasons.length?null:id.codes.length===1&&products.every(p=>mcIdentity(p).codes[0]===id.codes[0])?'supplier-model-code':latin.length>=3&&sameDescription?'latin-name-same-description':sliceRule?mcColourSliceRule(products,id):null;
+ const strong=!!rule;
+ return {key:id.key,name:id.name,ids:products.map(p=>p.id).sort(),variants:products.reduce((n,p)=>n+p.variants.length,0),colors:uniq(products.flatMap(p=>mcColors(p).map(c=>c.key))).length,automatic:strong,...(rule?{rule}:{}),reasons:reasons.length?reasons:strong?[]:['Название похоже, но код модели или полное совпадение источника не подтверждены']};
 }
 const mcPlan=memoByData(function(){
  const buckets=new Map();for(const p of S.products.values()){if(p.archived||p.merged_into||!p.variants?.length||p.model_grouping_locked)continue;const id=mcIdentity(p);if(!buckets.has(id.key))buckets.set(id.key,[]);buckets.get(id.key).push(p);}
- const groups=[];for(const products of buckets.values()){if(products.length<2)continue;const group=mcGroup(products,mcIdentity(products[0]));groups.push(group);
+ const groups=[];for(const products of buckets.values()){if(products.length<2)continue;const group=mcGroup(products,mcIdentity(products[0]),{sliceRule:true});groups.push(group);
   // Without the whole size family proven, the cards of one size (title still naming it) are judged on their own.
   if(!group.automatic){const exact=new Map();for(const p of products){const k=mcIdentity(p,{keepSize:true}).key;if(!exact.has(k))exact.set(k,[]);exact.get(k).push(p);}
    const used=new Set();if(exact.size>1)for(const part of exact.values())if(part.length>1){const sub=mcGroup(part,mcIdentity(part[0],{keepSize:true}));if(sub.automatic){groups.push(sub);sub.ids.forEach(id=>used.add(id));}}
@@ -80,7 +135,7 @@ function mcMergeGroup(group,{manual=false}={}){
  for(const p of products)touchP(p.id);
  survivor.model_color_sources=[...(survivor.model_color_sources||[]),...sources];survivor.model_source_ids=uniq([...(survivor.model_source_ids||[]),...products.flatMap(p=>p.model_source_ids||[p.id])]);survivor.model_name=group.name;survivor.model_colors_version=1;
  for(const p of products)if(p!==survivor){survivor.variants.push(...p.variants);p.variants=[];p.merged_into=survivor.id;p.pub=false;p.archived=true;p.archiveReason='MODEL: объединена с '+survivor.id;delete p.simple_excluded_reason;markProduct(p);}
- modelAudit(survivor,{source_products:before},{model:survivor.id,colors:mcColors(survivor).length,source_products:survivor.model_source_ids},'Одна модель → цвета → варианты',manual?'manual':'automatic');markProduct(survivor);return {id:survivor.id,merged_ids:oldIds,variants:survivor.variants.length};
+ if(!manual&&group.rule)survivor.model_merge_rule=group.rule;modelAudit(survivor,{source_products:before},{model:survivor.id,colors:mcColors(survivor).length,source_products:survivor.model_source_ids},'Одна модель → цвета → варианты',manual?'manual':'automatic');markProduct(survivor);return {id:survivor.id,merged_ids:oldIds,variants:survivor.variants.length};
 }
 function mcMigrate(groups=mcPlan().automatic){const results=groups.map(g=>mcMergeGroup(g));S.cfg.model_colors_version=1;S.cfgDirty=true;rebuildIndex();bumpData();return results;}
 function mcResolveId(id){const seen=new Set();while(S.products.get(id)?.merged_into&&!seen.has(id)){seen.add(id);id=S.products.get(id).merged_into;}return id;}

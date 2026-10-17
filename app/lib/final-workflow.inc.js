@@ -107,6 +107,9 @@ function finalSizeLabels(p){
 }
 // Supplier price per unit area (made-to-measure nets: «індивідуальний розмір», «ціна за 1 кв.м»): not an item price.
 const FINAL_UNIT_PRICE=/(?:ціна|цена)\s+за\s+(?:1\s*)?(?:кв\.?\s*м|м2|м²|квадратн)|індивідуальн\S*\s+розмір|индивидуальн\S*\s+размер/iu;
+// The unit is m² only when the supplier says «ціна за (1) кв.м / м²»; «індивідуальний розмір» alone is a QUOTE without a unit.
+const FINAL_AREA_PRICE=/(?:ціна|цена)\s+за\s+(?:1\s*)?(?:кв\.?\s*м|м2|м²|квадратн)/iu;
+function finalAreaPriced(v){return Object.values(v.offers||{}).some(o=>FINAL_AREA_PRICE.test(String(o.source_name||o.original_name||''))||Object.values(o.source_attributes||{}).some(x=>FINAL_AREA_PRICE.test(String(x))));}
 function finalUnitPriced(v){return Object.values(v.offers||{}).some(o=>FINAL_UNIT_PRICE.test(String(o.source_name||o.original_name||''))||Object.values(o.source_attributes||{}).some(x=>FINAL_UNIT_PRICE.test(String(x))));}
 // What the site shows for one SKU: colour + size label (NO_SIZE_REQUIRED shows none). Two SKUs with the same public cell
 // cannot be told apart by a buyer, so such a model is never READY.
@@ -132,9 +135,15 @@ const finalDecision=memoProd('final-decision',function(p){
  const openCategory=(p.classification_exceptions||[]).some(e=>e.kind==='category'&&e.status==='OPEN');
  if(!p.canonical_category_id||openCategory)add(moderate,'category',FINAL_MODERATION_TEXT.category[1],[p.category_review_status||'NEEDS_REVIEW',p.suggested_category_id?'Предложено: '+canonicalPath(p.suggested_category_id):''].filter(Boolean));
  if(variants.length>modelLimit(p)||finalModelReview().has(p.id))add(moderate,'grouping',FINAL_MODERATION_TEXT.grouping[1],[variants.length+' SKU']);
+ // Stage 5.4 (owner decision on UKR-TEC): a supplier set to take sizes from the description and characteristics
+ // (supplier.sizes_from_description) has no size column; a sized product of it for which neither its SKU size nor the
+ // model's sizes were found stays «розмір уточнюється» and goes to the owner (other suppliers: unchanged).
+ const sizeSuppliers=new Set((S.cfg.suppliers||[]).filter(s=>s.sizes_from_description===true).map(s=>s.id));
+ if(sizeSuppliers.size){const missing=variants.filter(v=>Object.keys(v.offers||{}).some(id=>sizeSuppliers.has(id))&&v.size_status!=='NO_SIZE_REQUIRED'&&v.size_confidence_tier!=='SAFE_AUTO');if(missing.length)add(moderate,'size',FINAL_MODERATION_TEXT.size[1],missing.slice(0,5).map(v=>v.sku));}
  const unknownColors=uniq(variants.flatMap(v=>simplePalette(v).unknown));if(unknownColors.length)add(moderate,'color',FINAL_MODERATION_TEXT.color[1],unknownColors.slice(0,5));
  if(classificationEnabled()||mcEnabled()){const colors=finalUsableColors(p,mcColors(p));if(colors.length>1&&colors.some(c=>!c.photos.length))add(moderate,'photo_ownership',FINAL_MODERATION_TEXT.photo_ownership[1],colors.filter(c=>!c.photos.length).map(c=>[c.color,c.camouflage].filter(Boolean).join(' / ')||c.id));}
- const unitPriced=variants.filter(finalUnitPriced);if(unitPriced.length)add(moderate,'price_unit',FINAL_MODERATION_TEXT.price_unit[1],unitPriced.slice(0,5).map(v=>v.sku));
+ // Stage 5.4 (owner decision): a per-m² SKU is no longer an owner question — it is published as a manager QUOTE (no cart,
+ // no payment, «Розрахувати вартість» → wholesale request D-54); see finalWireProduct.
  const sameTitle=(finalTitleOwners().get((p.canonical_category_id||'')+'\u0000'+norm(finalTitle(p)))||[]).filter(id=>id!==p.id);if(sameTitle.length)add(moderate,'grouping',FINAL_MODERATION_TEXT.grouping[1],['Та сама назва: '+sameTitle.slice(0,3).join(', ')]);
  const publicCells=finalPublicCells(p),cells=new Map(),same=[];for(const v of variants){const k=publicCells.get(v.sku);if(cells.has(k))same.push(cells.get(k),v.sku);else cells.set(k,v.sku);}
  if(same.length)add(moderate,'variant_cell',FINAL_MODERATION_TEXT.variant_cell[1],uniq(same).slice(0,6));
@@ -186,18 +195,27 @@ function finalWireProduct(p){
   // Private shipment routing for the SITE server (never public): the offer that prices this SKU.
   const local=p.variants.find(x=>x.sku===v.sku),c=local?calc(p,local):null,o=c?.o||c?.ref,sid=o?.sid||'';
   v.fulfillment_supplier_id=sid;v.fulfillment_supplier=sid?supName(sid):'';v.fulfillment_supplier_sku=String(o?.s||'');}
+ // Stage 5.4 (owner decision): a supplier price per m² (made-to-measure) is shown on the site without the cart: sale_mode
+ // QUOTE + price_unit m2 (additive variant fields, SITE quote_sale_version 1). Never orderable or payable through the cart;
+ // a model of QUOTE SKU only offers no size requests either. The m² price is the PIM price of one m².
+ const quote=new Set(p.variants.filter(finalUnitPriced).map(v=>v.sku)),area=new Set(p.variants.filter(finalAreaPriced).map(v=>v.sku));
+ for(const v of out.variants)if(quote.has(v.sku)){v.sale_mode='QUOTE';v.price_unit=area.has(v.sku)?'m2':null;v.order_submission_allowed=false;v.payment_allowed=false;v.requires_order_confirmation=true;}
+ if(quote.size)out.size_options=[];
+ if(quote.size&&out.variants.every(v=>v.sale_mode==='QUOTE')){out.order_submission_allowed=false;out.payment_allowed=false;out.requires_order_confirmation=true;}
  for(const k of ['availability_label','legacy_attributes','quality_score'])delete out[k];
  return out;
 }
 function finalExplicitHideIds(published){
  return Object.keys(published||{}).filter(id=>{const p=S.products.get(id);return p&&(p.archived||finalOwnerUnpublished(p)||finalDecision(p).state!=='READY');}).sort();
 }
-function pimSiteWire({published={}}={}){
+function finalQuoteModel(p){return (p.variants||[]).some(finalUnitPriced);}
+function pimSiteWire({published={},quoteSale=false}={}){
  if(!classificationEnabled())throw Error('CONTRACT_V3_REQUIRES_CLASSIFICATION: сначала выполните импорт с классификацией');
  if(!pricingProtected())throw Error('PRICING_POLICY_V1_REQUIRED');
- const products=[...S.products.values()].filter(p=>finalDecision(p).state==='READY').sort((a,b)=>a.id.localeCompare(b.id)).map(finalWireProduct);
+ // A SITE without quote_sale_version 1 would show a QUOTE model as unavailable: such models are not sent to it.
+ const products=[...S.products.values()].filter(p=>finalDecision(p).state==='READY'&&(quoteSale||!finalQuoteModel(p))).sort((a,b)=>a.id.localeCompare(b.id)).map(finalWireProduct);
  const categories=categoryPublicCatalogue();
- return {contract_version:3,version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,pim_version:PIM_VERSION,currency:'UAH',generated_at:new Date().toISOString(),catalog_revision:fnvHash(stableValue105(products.map(finalModelHash))),category_catalog_hash:fnvHash(JSON.stringify(categories)),categories,products,hide_ids:finalExplicitHideIds(published)};
+ return {contract_version:3,version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,pim_version:PIM_VERSION,currency:'UAH',generated_at:new Date().toISOString(),catalog_revision:fnvHash(stableValue105(products.map(finalModelHash))),category_catalog_hash:fnvHash(JSON.stringify(categories)),categories,products,hide_ids:uniq([...finalExplicitHideIds(published),...(quoteSale?[]:Object.keys(published||{}).filter(id=>{const p=S.products.get(id);return p&&finalQuoteModel(p);}))]).sort()};
 }
 // OD-4.1 (stage 5): the supplier payout per SKU for CRM gross profit — a separate PRIVATE contract
 // (rubizh-pim-private-costs v1, SITE POST /api/pim/costs). Never part of pimSiteWire()/buildFeed(); no supplier names.
@@ -343,7 +361,7 @@ async function finalPublish({allowStale=false}={}){
  if(!finalCapabilitiesOk(status.capabilities))throw Error('SYNC_DISABLED: сайт не подтвердил contract v3 (contract/pricing/category/size/inventory/order versions). Передача остановлена.');
  if(Number(status.capabilities?.freshness_policy_version)!==1)throw Error('SYNC_DISABLED: сайт не применяет правило свежести данных поставщиков (freshness_policy v1). Обновите сайт. Передача остановлена.');
  const published=await Store.get('site/v3/published')||{},hashes=await Store.get('site/v3/hashes')||{};
- const wire=pimSiteWire({published:Object.fromEntries(Object.entries(published).filter(([,x])=>!x.hidden))});
+ const wire=pimSiteWire({published:Object.fromEntries(Object.entries(published).filter(([,x])=>!x.hidden)),quoteSale:Number(status.capabilities?.quote_sale_version)===1});
  const items=wire.products.map(p=>({p,h:finalModelHash(p)})),changed=items.filter(o=>hashes[o.p.id]!==o.h),catsChanged=S.cfg.siteV3CatHash!==wire.category_catalog_hash;
  // Stage 5.1: the owner's freshness thresholds travel with chunk 0; a changed policy alone is worth a batch.
  const freshness=freshnessPolicy(),freshnessChanged=stableValue105(S.cfg.siteFreshnessPolicy||null)!==stableValue105(freshness);

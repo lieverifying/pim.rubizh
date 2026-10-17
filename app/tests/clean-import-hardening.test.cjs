@@ -107,14 +107,18 @@ test('language variants of existing canonical colours resolve; new camouflage na
  assert.equal(M.palette('Альпійська клякса').camouflage,M.palette('Альпийская клякса').camouflage);
  for(const c of ['Камуфляж','Очерет','Листя','Карбон','Скеля'])assert.deepEqual(M.palette(c).unknown,[c]);
 });
-test('made-to-measure nets priced per square metre are never READY (price is per unit area, not per item)',()=>{
+// Stage 5.4 (owner decision 2026-10-17): a per-m² price is still never an item price, but such goods are no longer an owner
+// question — they are published as a manager QUOTE (no cart, no payment, «Розрахувати вартість» → wholesale request).
+const quoteSku=(h,id)=>{h.ctx.pid=id;return JSON.parse(h.run('JSON.stringify(finalWireProduct(S.products.get(pid)).variants.map(v=>({sku:v.sku,sale_mode:v.sale_mode??null,price_unit:v.price_unit??null,order:v.order_submission_allowed,pay:v.payment_allowed})))'));};
+test('made-to-measure nets priced per square metre are never sold through the cart: published only as a manager quote per m²',()=>{
  const h=setup();
  card(h,'p-net','Маскувальна сітка M-Win мультикам','camouflage_nets',[['RUB-N1','Мультикам',offer('ZM-IND',{source_name:'Маскувальна сітка M-Win мультикам. Індивідуальний розмір (ціна за 1 кв.м.)',cost:42,payout:42})]]);
- const d=state(h,'p-net');assert.equal(d.state,'MODERATION');assert.deepEqual(d.reasons.find(r=>r.code==='price_unit').evidence,['RUB-N1']);
+ assert.ok(!state(h,'p-net').reasons.some(r=>r.code==='price_unit'),'no longer an owner question');
+ assert.deepEqual(quoteSku(h,'p-net'),[{sku:'RUB-N1',sale_mode:'QUOTE',price_unit:'m2',order:false,pay:false}]);
  card(h,'p-attr','Антидронова сітка M-WIN Піксель','camouflage_nets',[['RUB-N2','Піксель',offer('AD-IND',{source_attributes:{'ОБЕРІТЬ РОЗМІР СІТКИ':': Індивідуальний розмір'}})]]);
- assert.ok(state(h,'p-attr').reasons.some(r=>r.code==='price_unit'));
+ assert.deepEqual(quoteSku(h,'p-attr').map(v=>[v.sale_mode,v.order,v.pay]),[['QUOTE',false,false]]);
  card(h,'p-fixed','Маскувальна сітка M-Win мультикам 3х6 м','camouflage_nets',[['RUB-N3','Мультикам',offer('ZM-3x6',{source_name:'Маскувальна сітка M-Win мультикам 3х6 м (площа 18 кв.м.)'})]]);
- assert.ok(!state(h,'p-fixed').reasons.some(r=>r.code==='price_unit'),'a fixed size with its area is an item price');
+ assert.deepEqual(quoteSku(h,'p-fixed').map(v=>v.sale_mode),[null],'a fixed size with its area is an item price');
 });
 test('category evidence reads the supplier description carried by the offer when the card has none (clean import)',()=>{
  const h=setup();
@@ -212,7 +216,7 @@ test('M-WIN net grid selector: W×H is the exact SKU size of real nets; per-m² 
  h.run('mcMigrate()');h.ctx.pid=g.ids[0];
  const wire=JSON.parse(h.run('JSON.stringify(finalWireProduct(S.products.get(pid)))'));
  assert.deepEqual(wire.variants.map(v=>[v.sku,v.size_display]),[['RUB-LO-2х3','2×3 м'],['RUB-LO-3х4','3×4 м']],'one real SKU per size, no invented SKU');
- assert.equal(state(h,'n0').state,'MODERATION');assert.ok(state(h,'n0').reasons.some(r=>r.code==='price_unit'));
+ assert.deepEqual(quoteSku(h,'n0').map(v=>[v.sale_mode,v.price_unit,v.order,v.pay]),[['QUOTE','m2',false,false]],'the per-m² card stays apart and is a quote only');
 });
 test('a READY model never has zero priced variants; one unpriced SKU of a priced model is published disabled, never with a price',()=>{
  const h=setup();
@@ -246,5 +250,5 @@ test('one supplier group per colour (M-WIN antidrone nets): each colour\'s size 
  assert.ok(auto.every(g=>!/\d×\d|\dх\d|площа/.test(g.name)),'own sizes are not in the model name');
  h.run(`for(const id of ${JSON.stringify([...px,...mc])})S.products.get(id).name=S.products.get(id).name.replace(/ (Піксель|Мультикам)/,'')`);h.run('bumpData()');
  const named=JSON.parse(h.run('JSON.stringify(mcPlan().automatic.map(g=>g.name))'));assert.equal(named.length,2);assert.ok(named.some(n=>/Піксель$/.test(n))&&named.some(n=>/Мультикам$/.test(n)),'structured colour completes a title without it: '+named);
- h.run('mcMigrate()');assert.equal(state(h,px[2]).state,'MODERATION');assert.ok(state(h,px[2]).reasons.some(r=>r.code==='price_unit'));
+ h.run('mcMigrate()');assert.deepEqual(quoteSku(h,px[2]).map(v=>[v.sale_mode,v.order,v.pay]),[['QUOTE',false,false]],'the per-m² card stays apart and is a quote only');
 });

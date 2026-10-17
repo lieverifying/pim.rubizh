@@ -158,3 +158,13 @@ Import normalizes a quantity column according to its confirmed policy, not gener
 `binding_confirmation_required`, `size_confirmation_required` and `price_ready` form a second layer. Payment requires confirmed source IN_STOCK, confirmed real SKU and applicable size, valid price/margin, and no explicit expiry. Model options never become fake SKU. Source availability is preserved even when SKU availability is UNKNOWN or SIZE_CONFIRMATION_REQUIRED. Mock endpoints exercise these rules locally; real shop sync/checkout remain blocked until the actual shop implements this contract.
 
 Stage 5.2 (owner 2026-10-17) — data time of a supplier file. Every offer stores `source_generated_at` and `source_time_provenance` (`FILE_HEADER` | `FILE_MTIME` | `NONE`); `imported_at` stays an audit field and never gives a data age. A date without a time zone is Kyiv wall time; a date more than 5 minutes ahead or before 2020 is ignored (never clamped); a header later than the file's modification time yields to the modification time; a header older than the modification time by more than `payFreshHours` is kept and shown as a warning on the import screen (a supplier generator may not update it). Products created from the import queue keep the offer times (stage 5.2 fix: the queue used to drop them, so a clean catalog looked fresh by its import time). The file time never decides which stock wins: a new file with an unchanged header date still updates stock and availability.
+
+## Stage 5.4 — per-m² goods as a manager QUOTE (owner decision 2026-10-17)
+
+- A SKU whose supplier price is per unit area («ціна за 1 кв.м», «індивідуальний розмір») is published with
+  `sale_mode: "QUOTE"`, `order_submission_allowed: false`, `payment_allowed: false`, `requires_order_confirmation: true`;
+  `price_unit: "m2"` only for an explicit per-m² price (else `null`). A model with any QUOTE SKU sends no `size_options`.
+- PIM sends models with QUOTE SKU only when SITE advertises `capabilities.quote_sale_version: 1`; to an older SITE they
+  are not sent, and already-published ones go to `hide_ids`. `pimSiteWire()` without that confirmation sends none.
+- SITE enforces it on its own (contract README «Stage 5.4 additions»): stored permissions off, no size requests,
+  checkout refuses; the storefront shows «Розрахувати вартість» → wholesale request (D-54).

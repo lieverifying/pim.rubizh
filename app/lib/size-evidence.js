@@ -41,8 +41,15 @@ function parse(raw,{scope='model',type='clothing',sharedSku=false}={}){
 function fromText(raw,{type,scope='model',source='description'}={}){
  const text=clean(String(raw||'').replace(/<[^>]*>/g,' ')),out=[];
  // Size labels terminate at units/sentence or unrelated words. Dimensions are not body sizes.
- const re=/(?:розміри|размеры|sizes|розмір|размер|size)\s*[:=-]?\s*(one\s+size|універсальний|универсальный|(?:\d{2}|XXXS|XXS|XS|[2-6]?XL|XXL|XXXL|S|M|L)(?:\s*[-–—,;/]\s*(?:\d{2}|XXS|XS|[2-6]?XL|XXL|XXXL|S|M|L))*)(?![\p{L}\p{N}])/giu;
+ const re=/(?:розміри|размеры|sizes|розмір|размер|size)\s*[:=-]?\s*(one\s+size|універсальний|универсальный|(?:\d{2}|XXXS|XXS|XS|[2-6]?XL|XXL|XXXL|S|M|L)(?:\s*[-–—,;/]\s*(?:\d{2}|XXS|XS|[2-6]?XL|XXL|XXXL|S|M|L))*)(?:\s*рр?\.?)?(?![\p{L}\p{N}])/giu;
  for(const m of text.matchAll(re)){if(/^\s*(?:[xх×]|см|cm|мм|mm)/iu.test(text.slice(m.index+m[0].length)))continue;const plural=/^(?:розміри|размеры|sizes)/iu.test(m[0]),parsed=parse(m[1],{type,scope:plural?'model':scope});if(parsed)out.push({...parsed,source,scope:plural?'model':scope,proof:m[0]});}
+ // Stage 5.4 (UKR-TEC): «Розмірна сітка: 40р. - 26 см. 41р. - 27 см. …» — a table of this model's sizes with foot/body
+ // lengths: 3+ rows, two-digit sizes strictly ascending by one step at most 2. Always model sizes (never one SKU's). A
+ // generic table «на все взуття нашого виробництва» is the maker's whole range, not this model's sizes: no evidence.
+ for(const m of text.matchAll(/(?:розмірна\s+сітка|размерная\s+сетка)(?!\s+на\s)\s*[:=-]?\s*((?:\d{2}\s*рр?\.?\s*[-–—=]\s*\d{1,2}(?:[.,]\d)?\s*см\.?[\s;,]*){3,})/giu)){
+  const list=[...m[1].matchAll(/(\d{2})\s*рр?\.?\s*[-–—=]/gu)].map(x=>Number(x[1]));
+  if(list.every((x,i)=>!i||x>list[i-1]&&x-list[i-1]<=2))out.push({kind:'SIZE_LIST',size_list:list,raw:m[0].slice(0,120),source,scope:'model',proof:m[0].slice(0,120),size_table:true});
+ }
  return out;
 }
 function variantLabel(raw,{type,source='variant.label'}={}){
@@ -96,7 +103,8 @@ function resolveCore({type,required=true,variant={},product={},offers=[],rules=[
  // Existing supplier-specific parsers may contribute ONLY evidence already classified SAFE_AUTO.
  const fallbackParsed=fallback?.size?parse(fallback.size.size_display||fallback.size.size_raw,{type,scope:'sku'}):null;
  if(fallback?.tier==='SAFE_AUTO'&&fallback.size&&!fallback.size.size_unconfirmed&&fallback.size.size_normalized!=null&&!['SIZE_RANGE','SIZE_LIST'].includes(fallbackParsed?.kind)&&(!offers.some(o=>o.sharedSku)||variant.source_review_confirmed===true))return {status:fallback.size.size_system==='universal'?'ONE_SIZE':'EXACT_SIZE',confidence:'SAFE_AUTO',value:fallback.size.size_normalized,raw:fallback.size.size_display,evidence:[{source:'supplier_format_parser',...fallback.size}],metadata};
- const options=metadata.filter(e=>e.confidence==='SAFE_AUTO');
+ // A size table (foot/body lengths) is weaker than an explicit «Розміри: …» list of the model: used only without one.
+ const safe=metadata.filter(e=>e.confidence==='SAFE_AUTO'),listed=safe.filter(e=>!e.size_table),options=listed.length?listed:safe;
  if(options.length){const signatures=uniq(options.map(e=>JSON.stringify([e.size_system,e.allowed_sizes])));if(signatures.length>1)return {status:'SIZE_CONFIRMATION_REQUIRED',confidence:'AMBIGUOUS',evidence,metadata,reason:'CONFLICTING_MODEL_SIZE_OPTIONS'};const chosen=options[0];return {status:chosen.kind,sku_status:'SIZE_CONFIRMATION_REQUIRED',confidence:'SAFE_AUTO',size_system:chosen.size_system,size_range_min:chosen.size_range_min,size_range_max:chosen.size_range_max,allowed_sizes:chosen.allowed_sizes,size_options:chosen.allowed_sizes.map(size=>({size,supplier_sku:null,stock:null,stock_status:'UNKNOWN',availability:'SIZE_CONFIRMATION_REQUIRED',selectable_for_request:true,checkout_allowed:false})),evidence,metadata,reason:'MODEL_SIZE_OPTIONS_CONFIRMED_STOCK_UNKNOWN'};}
  const skuSuggestions=offers.filter(o=>o.s&&/[-_](?:XXS|XS|S|M|L|XL|XXL|[2-5]XL)$/iu.test(o.s));
  if(skuSuggestions.length&&/^(?:clothing|combat_shirt|pants|jacket|fleece|base_layer|gloves)$/u.test(type||''))return {status:'SIZE_CONFIRMATION_REQUIRED',confidence:'LIKELY',evidence,metadata,suggestion:skuSuggestions[0].s.match(/[-_]([^_-]+)$/u)[1],reason:'SUPPLIER_SKU_RULE_NOT_CONFIRMED'};
