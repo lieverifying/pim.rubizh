@@ -34,11 +34,42 @@ Colour slices: 277 new models from 576 cards; consensus: 12 categories confirmed
 (8191 / 11). Data time of M-WIN: the download date (03.10, still older than 8 days on 17.10). The 20-model sample for the
 owner: `out/run9/auto-merge-sample.json`.
 
+## Stage 5.4.1 — owner decisions on the 5.4 questions (2026-10-17)
+
+| Decision | Change | Tests |
+|---|---|---|
+| Per-m² nets of one kind in different colours — one model with a colour choice, still QUOTE | rule `colour-slices-quote` (`lib/model-colors-ui.inc.js`): per-m² cards only, never together with fixed-price cards; a generic name is allowed (the rest of the evidence still applies); a supplier group code shared with that colour's fixed sizes (M-WIN) does not block | `stage54-moderation` +2; `clean-import-hardening` M-WIN antidrone (the per-m² cards now form one quote model) |
+| UKR-TEC without a found size — sold as in 5.2 (request, the manager confirms the size), no size moderation | `finalDecision` no longer raises `size` for `sizes_from_description`; the setting is gone from the supplier panel (an old backup value is harmless) | `stage54-moderation` UKR-TEC test rewritten |
+| QUOTE models in the sitemap while shown | SITE (`59ea7e4`) | SITE `stage54-quote` |
+| Kiborg merges | no change — waits for the owner's check of the 20-model sample | — |
+
+Rehearsal 5.4 → 5.4.1 (same five files, same owner settings; private report `out/run10/rehearsal-report.json`, 44 min):
+
+| | 5.4 (`run9`) | 5.4.1 (`run10`) |
+|---|---|---|
+| READY / MODERATION / REJECTED | 1636 / 1229 / 31 | 1723 / 1129 / 31 |
+| Active cards (models) | 2896 | 2883 |
+| «grouping» reasons | 1439 | 1410 |
+| «category» reasons | 399 | 399 |
+| «size» reasons (UKR-TEC) | 161 | 0 |
+| UKR-TEC READY / MODERATION | 207 / 204 | 293 / 118 |
+| QUOTE models: M-WIN / Kiborg | 26 / 21 | 16 / 18 |
+
+New `colour-slices-quote` models: M-WIN 1 (10 cards), Kiborg 1 (3 cards). SKUs, queue and content unchanged (8191 / 11 / 3017);
+no secrets in the backup. Restore check (`audit/rehearsal-5-2-verify.cjs`, private `out/run10/restore-and-quality.json`):
+clean profile (migration pending → ready, writable) and the owner's «Восстановить из файла» give the same catalog, settings
+and counts (4232 / 8191 / 11 / 3017). The site wire of the two paths differs only in build-time fields — `generated_at` and
+`variants[].stock_data_age_hours` (5384 SKU, e.g. 334.58 → 334.72 h: the age at the moment each wire is built); the verify
+script now reports this field by field (`wire_difference`; the same inequality in 5.2/5.4 had no breakdown). Tests 744/744.
+
 ## Changed existing tests
 
 | Test | Before → after | Why |
 |---|---|---|
 | `clean-import-hardening` «made-to-measure nets priced per square metre …» and two M-WIN net tests | per-m² card is MODERATION with `price_unit` → it is not an owner question; its wire SKU is `QUOTE` / `m2`, not orderable, not payable; still never merged | owner decision S54-03 (the assertions are stricter: wire flags, not only a reason code) |
+| `stage54-moderation` «UKR-TEC decision …» (5.4.1, rewritten) | with `sizes_from_description` a sized product without a found size → reason `size`, moderation → even with the old flag in a backup: no `size` reason; the SKU is orderable by request, `payment_allowed: false`, `requires_order_confirmation: true`; the setting is not on the supplier panel | owner decision 5.4.1 (S54-02): sold as in 5.2. The new assertions check the selling flags, not only the absence of a reason |
+| `clean-import-hardening` «one supplier group per colour (M-WIN antidrone nets)» (5.4.1) | the per-m² card stays apart (one QUOTE SKU) → the per-m² cards of both colours form one `colour-slices-quote` model (two QUOTE SKU, never orderable or payable); the fixed-size models per colour are checked exactly as before | owner decision 5.4.1 (S541-01) |
+| `stage54-moderation` «grouping rule: cards that must NOT be joined stay an owner question», case 7 (5.4.1) | a per-m² card never joins anything → a per-m² card never joins a fixed-price card (checked on a mix); per-m² cards of one kind join each other (two new tests) | owner decision 5.4.1 (S541-01) |
 
 ## Reviews
 

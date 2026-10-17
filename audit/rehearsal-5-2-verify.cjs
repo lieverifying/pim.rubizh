@@ -14,6 +14,13 @@ const backupSecrets=cfg=>{const hits=[];(function walk(o,p){if(o&&typeof o==='ob
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const log=m=>console.log(new Date().toISOString().slice(11,19),m,'rss',Math.round(process.memoryUsage().rss/1e6)+'MB');
 const write=(name,data)=>{const f=path.join(outDir,name);fs.writeFileSync(f,data,{mode:0o600});fs.chmodSync(f,0o600);return f;};
+// Stage 5.4.1: the two wires are built about 30 min apart; generated_at is the build time. Report what else differs.
+function wireDiff(x,y){x=JSON.parse(x);y=JSON.parse(y);const top=[...new Set([...Object.keys(x),...Object.keys(y)])].filter(k=>JSON.stringify(x[k])!==JSON.stringify(y[k]));
+ const byId=a=>new Map((Array.isArray(a)?a:[]).map(p=>[p.id,JSON.stringify(p)])),px=byId(x.products),py=byId(y.products),ids=[...new Set([...px.keys(),...py.keys()])].filter(id=>px.get(id)!==py.get(id));
+ // Which fields differ (paths without array indexes), with one example value pair each.
+ const fields={},walk=(u,v,at)=>{if(JSON.stringify(u)===JSON.stringify(v))return;if(u&&v&&typeof u==="object"&&typeof v==="object"){for(const k of new Set([...Object.keys(u),...Object.keys(v)]))walk(u[k],v[k],Array.isArray(u)?at+"[]":at+"."+k);return;}const f=fields[at]||(fields[at]={count:0,example:[u,v]});f.count++;};
+ const qx=new Map((x.products||[]).map(p=>[p.id,p])),qy=new Map((y.products||[]).map(p=>[p.id,p]));for(const id of ids)walk(qx.get(id),qy.get(id),"product");
+ return {top_level_fields:top,products_differing:ids.length,product_examples:ids.slice(0,5),fields,equal_except_generated_at:top.every(k=>k==="generated_at")};}
 function harness(){const h=createHarness({runtime:true,production:true});h.ctx.XLSX=require('../app/vendor/xlsx-0.20.3.min.js');h.ctx.DOMParser=LightDOMParser;h.run('render=()=>{}');return h;}
 // Comparable view of a catalog: per product id the canonical JSON, plus counts.
 const CATALOG=`JSON.stringify((()=>{const ids=[...S.products.keys()].sort();return {products:S.products.size,skus:[...S.products.values()].reduce((n,p)=>n+p.variants.length,0),queue:S.queue.size,content:S.content.size,
@@ -41,7 +48,7 @@ const digest=x=>({...x,product_ids_sha:sha(x.product_ids_sha),products_sha:sha(x
  await h2.run('applyRestoreData(d)');h2.ctx.d=null;await h2.run('persist()');
  const b=JSON.parse(h2.run(CATALOG)),settingsB=JSON.parse(h2.run(SETTINGS)),wireB=JSON.stringify(await h2.run('pimSiteWire()'));log('owner path restored');
  result.checks.owner_restore={catalog:digest(b),catalog_equal_clean_profile:a.products_sha===b.products_sha&&a.product_ids_sha===b.product_ids_sha,settings_equal_clean_profile:JSON.stringify(settingsA)===JSON.stringify(settingsB),
-  wire_equal_clean_profile:sha(wireA)===sha(wireB),counts_equal_backup:b.products===expected.products&&b.skus===expected.skus&&b.queue===expected.queue&&b.content===expected.content};
+  wire_equal_clean_profile:sha(wireA)===sha(wireB),wire_difference:wireDiff(wireA,wireB),counts_equal_backup:b.products===expected.products&&b.skus===expected.skus&&b.queue===expected.queue&&b.content===expected.content};
  result.settings=settingsB;
  // Supplier files: parse only — data time and rows.
  const files=[];for(const src of JSON.parse(fs.readFileSync(sourcesPath,'utf8'))){const file=fs.readFileSync(src.file),stat=fs.statSync(src.file);
