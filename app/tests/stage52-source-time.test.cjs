@@ -92,3 +92,19 @@ test('the import screen shows the data time of the file and warns about a stale 
  h.run('S.imp={sup:"supplier-a",file:parsed.file,rows:parsed.rows,hdr:parsed.hdr,sheet:"XML",sheets:["XML"],wb:null,zero:false,xml:true,source_time:parsed.source_time};remap();S.view="import"');
  const screen=h.run('vImport()');assert.match(screen,/data-source-time/);assert.match(screen,/дата у файлі .* а файл збережено/);
 });
+test('a price jump held for review still takes the data time of the new file (no fresh stock next to an old file time)',async()=>{
+ const now=Date.now(),h=await harness();await importFile(h,yml({date:kyiv(now-6*D)}),'feed.xml',now);h.run('createFromGroup(groupsOfQueue()[0])');
+ const before=offer(h);assert.equal(before.source_generated_at,minute(now-6*D));
+ const doubled=yml({date:kyiv(now-2*H)}).replace('<price>1000</price>','<price>2400</price>');await importFile(h,doubled,'feed.xml',now);
+ const after=offer(h);assert.equal(after.source_generated_at,minute(now-2*H),'the new file time');assert.equal(after.source_time_provenance,'FILE_HEADER');
+});
+test('a product created from the queue keeps the last confirmed availability, like an updated offer (the 10.9.3 migration had to add it later)',async()=>{
+ // A STATUS supplier (all five real feeds work this way): «есть/нет» confirms availability.
+ const now=Date.now(),h=await harness();h.run('S.cfg.suppliers[0].inventory_policy={id:"test-status-v1",mode:"STATUS",confirmed:true,source_column:"Наличие",status_map:{"есть":"IN_STOCK","нет":"OUT_OF_STOCK"}}');
+ await importFile(h,yml({date:kyiv(now-2*H)}),'feed.xml',now);h.run('createFromGroup(groupsOfQueue()[0])');
+ const o=offer(h);assert.ok(o._p);assert.equal(o.last_valid_inventory_observation?.availability_confirmation,'CONFIRMED');assert.equal(o.last_valid_inventory_observation?.supplier_sku,'A-1');
+ // The migration then has nothing to add: restoring the catalog into a clean profile does not change it.
+ const before=h.run('JSON.stringify(stableValue105([...S.products.values()]))');
+ h.run('for(const p of S.products.values())for(const v of p.variants)for(const [sid,o] of Object.entries(v.offers||{}))if(!o.last_valid_inventory_observation){const inv=classificationInventory({sid,...o},v);if(inv.availability_confirmation==="CONFIRMED")o.last_valid_inventory_observation={...inv,supplier_sku:o.s};}');
+ assert.equal(h.run('JSON.stringify(stableValue105([...S.products.values()]))'),before);
+});

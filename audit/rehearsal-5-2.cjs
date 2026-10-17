@@ -15,10 +15,7 @@ const write=(name,data)=>{const f=path.join(outDir,name);fs.writeFileSync(f,data
 const read=p=>{const b=fs.readFileSync(p);return JSON.parse(p.endsWith('.gz')?zlib.gunzipSync(b):b);};
 function harness(){const h=createHarness({runtime:true,production:true});h.ctx.XLSX=require('../app/vendor/xlsx-0.20.3.min.js');h.ctx.DOMParser=LightDOMParser;h.run('render=()=>{}');return h;}
 // Settings that must survive the reset and the backup → restore round trip.
-const SETTINGS=`JSON.stringify({categories:(S.cfg.canonical_categories||[]).length,suppliers:S.cfg.suppliers.map(s=>({id:s.id,name:s.name,auto:s.auto,priority:s.priority,terms:s.terms,mapping:s.mapping,fulfillment:s.fulfillment,inventory_policy:s.inventory_policy||null})),
- catMap:S.cfg.catMap,catRules:S.cfg.catRules,colorMap:S.cfg.colorMap,sizeMap:S.cfg.sizeMap,brandMap:S.cfg.brandMap,supplierAliases:S.cfg.supplierAliases,supplier_category_mapping:S.cfg.supplier_category_mapping||null,
- pricing:[S.cfg.pricing_policy_version,S.cfg.minMargin,S.cfg.bigPriceFrom,S.cfg.bigPriceMargin,S.cfg.kitMargin,S.cfg.discountMarginFloor,S.cfg.donPct,S.cfg.donCapPct,S.cfg.taxPct,S.cfg.acquiringPct,S.cfg.round,S.cfg.roundMode,S.cfg.tiers,S.cfg.defaultMarkup,S.cfg.rules],
- freshness:freshnessPolicy(),inventory_policy_version:S.cfg.inventory_policy_version,classification_version:S.cfg.classification_version,model_colors_version:S.cfg.model_colors_version,autoprices_enabled:S.cfg.autoprices_enabled===true})`;
+const {SETTINGS,quality}=require('./rehearsal-5-2-lib.cjs');
 (async()=>{
  fs.mkdirSync(outDir,{recursive:true,mode:0o700});const t0=performance.now();
  const sourceBytes=fs.readFileSync(backupPath),backupSha=sha(sourceBytes);let source=read(backupPath);
@@ -55,43 +52,7 @@ const SETTINGS=`JSON.stringify({categories:(S.cfg.canonical_categories||[]).leng
   // applyImport offers the owner a «before import» backup download; the harness keeps every download in memory.
   h.downloads.length=0;h.run('S.imp=null');if(global.gc)global.gc();
  }
- // Owner view of the new catalog: what the queue becomes (the screens' decisions), per supplier.
- const q=JSON.parse(h.run(`JSON.stringify((()=>{
-  const pol=freshnessPolicy(),by={},sup=id=>by[id]||(by[id]={products:0,skus:0,category_tier:{},category_review:{},size_tier:{},size_status:{},decision:{},moderation_reasons:{},rejected_reasons:{},
-   no_photo:0,no_price:0,margin_blocked:0,availability:{},contradictory_availability:0,freshness:{fresh:0,confirm:0,hidden:0},multi_color_models:0,multi_supplier_models:0,queue:{}});
-  const nameKey=p=>(finalTitle(p)||p.name||'').toLowerCase().replace(/\\s+/g,' ').trim()+'|'+(p.brand||'').toLowerCase().trim();const names=new Map(),barcodes=new Map();
-  for(const p of S.products.values()){
-   const sids=[...new Set(p.variants.flatMap(v=>Object.keys(v.offers||{})))];const d=finalDecision(p);
-   for(const s of sids){const b=sup(s);b.products++;b.category_tier[p.category_confidence_tier||'NONE']=(b.category_tier[p.category_confidence_tier||'NONE']||0)+1;
-    b.category_review[p.category_review_status||'NONE']=(b.category_review[p.category_review_status||'NONE']||0)+1;b.decision[d.state]=(b.decision[d.state]||0)+1;
-    const bag=d.state==='MODERATION'?b.moderation_reasons:d.state==='REJECTED'?b.rejected_reasons:null;if(bag)for(const r of d.reasons)bag[r.code]=(bag[r.code]||0)+1;
-    if(!p.archived&&!finalUsablePhotos(p).length)b.no_photo++;if(mcColors(p).length>1)b.multi_color_models++;if(sids.length>1)b.multi_supplier_models++;}
-   const k=nameKey(p);names.set(k,[...(names.get(k)||[]),{id:p.id,sids}]);
-   for(const v of p.variants)for(const [s,o] of Object.entries(v.offers||{})){const b=sup(s);b.skus++;
-    b.size_tier[v.size_confidence_tier||'NONE']=(b.size_tier[v.size_confidence_tier||'NONE']||0)+1;b.size_status[v.size_status||'NONE']=(b.size_status[v.size_status||'NONE']||0)+1;
-    const c=calc(p,v);if(!(c.price>0))b.no_price++;if(modelVariant(p,v).margin_blocked)b.margin_blocked++;
-    const a=classificationAvailability(p,v).availability;b.availability[a]=(b.availability[a]||0)+1;
-    const inv=classificationInventory({sid:s,...o},v);if(inv.rule==='status-quantity-contradiction')b.contradictory_availability++;
-    const cl=classificationFreshnessClass(p,v,{sid:s,...o});if(cl)b.freshness[cl]++;
-    if(v.barcode){const key=String(v.barcode).trim();barcodes.set(key,[...(barcodes.get(key)||[]),s]);}}
-  }
-  for(const it of S.queue.values()){const b=sup(it.sup);const r=it.rejected_import?.reason||it.status||(it.review?.type)||'OPEN';b.queue[r]=(b.queue[r]||0)+1;}
-  const dupNames=[...names.values()].filter(l=>l.length>1),crossNames=dupNames.filter(l=>new Set(l.flatMap(x=>x.sids)).size>1);
-  const crossBarcodes=[...barcodes.values()].filter(l=>new Set(l).size>1).length;
-  return {by_supplier:by,same_name_models:dupNames.length,same_name_across_suppliers:crossNames.length,same_barcode_across_suppliers:crossBarcodes,
-   totals:{products:S.products.size,skus:[...S.products.values()].reduce((n,p)=>n+p.variants.length,0),queue:S.queue.size,policy:pol}};
- })())`));
- // Examples for the owner's decisions (names and reasons only — no purchase prices, no supplier article data).
- const examples=JSON.parse(h.run(`JSON.stringify((()=>{const out={},add=(k,x)=>{(out[k]=out[k]||[]);if(out[k].length<3)out[k].push(x);};
-  for(const p of S.products.values()){const d=finalDecision(p),title=finalTitle(p)||p.name,sids=[...new Set(p.variants.flatMap(v=>Object.keys(v.offers||{})))].map(s=>S.cfg.suppliers.find(x=>x.id===s)?.name||s);
-   if(p.category_confidence_tier==='AMBIGUOUS')add('category_ambiguous',{title,suppliers:sids,category:p.canonical_category_id,suggestion:p.category_suggestion_id||null});
-   if(p.category_confidence_tier==='LIKELY')add('category_likely',{title,suppliers:sids,category:p.canonical_category_id});
-   for(const r of d.reasons)add('moderation_'+r.code,{title,suppliers:sids,why:r.why||''});
-   if(!finalUsablePhotos(p).length&&!p.archived)add('no_photo',{title,suppliers:sids});
-   if(p.variants.some(v=>v.size_confidence_tier&&v.size_confidence_tier!=='SAFE_AUTO'))add('size_unconfirmed',{title,suppliers:sids,sizes:p.variants.filter(v=>v.size_confidence_tier!=='SAFE_AUTO').slice(0,4).map(v=>v.size||(v.offers&&Object.values(v.offers)[0]?.size_raw)||'')});
-   if(sids.length>1)add('multi_supplier_model',{title,suppliers:sids});}
-  for(const it of S.queue.values())add('queue_'+(it.rejected_import?.reason||it.review?.type||'open'),{name:it.n,supplier:S.cfg.suppliers.find(x=>x.id===it.sup)?.name||it.sup});
-  return out;})())`));
+ const {q,examples}=quality(h);
  log('report built');if(h.run('S.cfg.autoprices_enabled===true'))throw Error('AUTOPRICES must stay off');
  // The standard backup (the «Резервная копия» download), written as .json and .json.gz.
  await h.run('persist()');await h.run('backupDl("rehearsal-5-2",false)');
@@ -101,13 +62,10 @@ const SETTINGS=`JSON.stringify({categories:(S.cfg.canonical_categories||[]).leng
  const statsOriginal=JSON.parse(h.run('JSON.stringify(catalogStats())'));const settingsFinal=JSON.parse(h.run(SETTINGS));
  const wireA=JSON.stringify(await h.run('pimSiteWire()'));
  // Restore into a clean profile (empty store, nothing loaded): validation, the restore the owner runs, persist.
- log('backup written');const h2=harness();await h2.run('Store.init()');h2.ctx.d=JSON.parse(backupText);h2.run('tzValidateBackup(d)');await h2.run('applyRestoreData(d)');await h2.run('persist()');
- const statsRestored=JSON.parse(h2.run('JSON.stringify(catalogStats())'));const settingsRestored=JSON.parse(h2.run(SETTINGS));const wireB=JSON.stringify(await h2.run('pimSiteWire()'));
- const restore={stats_equal:JSON.stringify(statsOriginal)===JSON.stringify(statsRestored),settings_equal:JSON.stringify(settingsFinal)===JSON.stringify(settingsRestored),wire_equal:sha(wireA)===sha(wireB),
-  stats:statsRestored,wire_sha256:sha(wireB)};
- const report={generated_at:new Date().toISOString(),settings_backup_sha256:backupSha,settings_kept_through_reset:JSON.stringify(settingsBefore)===JSON.stringify(settingsAfterReset),settings:settingsFinal,empty_after_reset:empty,
-  imports,quality:q,backup:{file:path.basename(backupGz),json_sha256:sha(backupBytes),gz_sha256:sha(fs.readFileSync(backupGz)),bytes:backupBytes.length,secrets_found:secrets,products:statsOriginal.products},restore,
-  network_requests:(h.requests||[]).length+(h2.requests||[]).length,sync_sent:false,autoprices_enabled:false,ms:Math.round(performance.now()-t0)};
- write('rehearsal-report.json',JSON.stringify(report,null,1)+'\n');write('owner-decision-examples.json',JSON.stringify(examples,null,1)+'\n');
- console.log(JSON.stringify({products:q.totals.products,skus:q.totals.skus,queue:q.totals.queue,restore_ok:restore.stats_equal&&restore.settings_equal&&restore.wire_equal,secrets,net:report.network_requests,ms:report.ms}));
+ log('backup written');
+ const partial={generated_at:new Date().toISOString(),settings_backup_sha256:backupSha,settings_kept_through_reset:JSON.stringify(settingsBefore)===JSON.stringify(settingsAfterReset),settings:settingsFinal,empty_after_reset:empty,imports,quality:q,
+  backup:{file:path.basename(backupGz),json_sha256:sha(backupBytes),bytes:backupBytes.length,secrets_found:secrets,stats:statsOriginal},wire_sha256:sha(wireA),autoprices_enabled:false,sync_sent:false};
+ write('rehearsal-report.json',JSON.stringify(partial,null,1)+'\n');write('owner-decision-examples.json',JSON.stringify(examples,null,1)+'\n');
+ // Restore check: audit/rehearsal-5-2-verify.cjs (a clean profile and an already-migrated PIM), run separately.
+ console.log(JSON.stringify({products:q.totals.products,skus:q.totals.skus,queue:q.totals.queue,secrets,ms:Math.round(performance.now()-t0)}));
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});
