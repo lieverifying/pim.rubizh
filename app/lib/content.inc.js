@@ -20,6 +20,13 @@ ceSourcePlain=function(raw){
  const el=document.createElement('textarea');el.innerHTML=text;
  return el.value.replace(/[^\S\n]+/g,' ').replace(/\n\s*\n/g,'\n').trim();
 };
+// Stage 5.5 (wave timing): every finalDecision pass decodes the same supplier texts again; the result depends on the text only.
+const ceSourcePlainRaw55=ceSourcePlain,ceSourcePlainCache55=new Map();
+ceSourcePlain=function(raw){
+ const k=String(raw||'');if(k.length>65536)return ceSourcePlainRaw55(k);
+ let v=ceSourcePlainCache55.get(k);if(v===undefined){if(ceSourcePlainCache55.size>=60000)ceSourcePlainCache55.clear();v=ceSourcePlainRaw55(k);ceSourcePlainCache55.set(k,v);}
+ return v;
+};
 function ceSourceUnits(text){
  // Protect still unknown HTML entities from the list separator as well.
  return String(text).split(/\n+|(?<!&[a-zA-Z]{1,20});\s*|(?<=[!?])\s+|(?<=\.)\s+(?=[A-ZА-ЯІЇЄҐ])/u).map(s=>s.replace(/^[•▪–—-]+\s*/u,'').trim()).filter(Boolean);
