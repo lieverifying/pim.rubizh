@@ -1,0 +1,11 @@
+# Review reports of 2026-10-08: "key" is the FNV hash id of an exception group (kind: category …), not a secret.
+440aa60ee42795ba8bf5167d8121470a5a56aab3:reviews/pim-10.9.3-rc/exceptions.json:generic-api-key:9509
+440aa60ee42795ba8bf5167d8121470a5a56aab3:reviews/pim-10.9.3-rc/exceptions.json:generic-api-key:9809
+440aa60ee42795ba8bf5167d8121470a5a56aab3:reviews/pim-10.9.3-rc/exceptions.json:generic-api-key:13773
+440aa60ee42795ba8bf5167d8121470a5a56aab3:reviews/pim-10.9.3-rc/exceptions.json:generic-api-key:15514
+440aa60ee42795ba8bf5167d8121470a5a56aab3:reviews/pim-10.9.3-rc/exceptions.json:generic-api-key:16694
+14c62909f067d43d7dd98528cd1b5317f2d831fd:reviews/category-size-runtime-2026-10-09/exceptions.json:generic-api-key:9509
+14c62909f067d43d7dd98528cd1b5317f2d831fd:reviews/category-size-runtime-2026-10-09/exceptions.json:generic-api-key:9809
+14c62909f067d43d7dd98528cd1b5317f2d831fd:reviews/category-size-runtime-2026-10-09/exceptions.json:generic-api-key:13773
+14c62909f067d43d7dd98528cd1b5317f2d831fd:reviews/category-size-runtime-2026-10-09/exceptions.json:generic-api-key:15514
+14c62909f067d43d7dd98528cd1b5317f2d831fd:reviews/category-size-runtime-2026-10-09/exceptions.json:generic-api-key:16694

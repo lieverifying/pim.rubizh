@@ -65,3 +65,9 @@ test('the final text check finds no G1–G5 signal in a cleaned description',()=
  const r=JSON.parse(h.run("(()=>{const d=ceGenerate(S.products.get('p-a'));return JSON.stringify(ceCommercialSignals(plainSupplierText(d.html),S.products.get('p-a')));})()"));
  assert.deepEqual(r,[]);
 });
+test('G2 (stage 5.5 review): «наявність знімних лямок» in a sentence is a feature, not stock — kept; a stock sentence still goes',()=>{
+ const h=createHarness();h.add(h.product({name:'Куртка Forester Trail Shell утеплена',brand:'Forester',desc:'<p>Куртка має наявність знімних лямок для рюкзака.</p><p>Тканина softshell 320 г/м².</p><p>Наявність: в наявності на складі.</p>',attrs:{}}));
+ const d=h.run("(()=>{const d=ceGenerate(S.products.get('p-a'));return JSON.parse(JSON.stringify({plain:plainSupplierText(d.html),removed:d.removedFragments||[]}));})()");
+ assert.match(d.plain,/знімних лямок/,'a feature sentence with «наявність» stays');
+ assert.doesNotMatch(d.plain,/на складі/,'the stock sentence goes');assert.ok(d.removed.some(r=>r.group==='G2'),'stock is still cut (G2)');
+});

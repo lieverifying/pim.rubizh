@@ -18,7 +18,9 @@ function workflowActionFinish(ctx){
  WORKFLOW.active=null;for(const [el,disabled] of WORKFLOW.controls)el.disabled=disabled;WORKFLOW.controls.clear();workflowRenderStatus();
 }
 const workflowToast=toast;
-toast=function(message){const ctx=WORKFLOW.active;if(ctx){ctx.message=String(message);if(/(?:^|\s)(?:ошибка|помилка)(?:\s|:|$)|не удалось|не сохран|не збереж|не найден|не создан|не вдалося/iu.test(ctx.message))ctx.error=ctx.message;if(ctx.requiresSave)return;}workflowToast(message);};
+// Stage 5.5 review (a11y): the kind is passed on; a message that reads as an error is shown as one (longer, role=alert).
+const WORKFLOW_ERROR_RE=/(?:^|\s)(?:ошибка|помилка)(?:\s|:|$)|не удалось|не сохран|не збереж|не найден|не создан|не вдалося/iu;
+toast=function(message,kind){const ctx=WORKFLOW.active;if(ctx){ctx.message=String(message);if(WORKFLOW_ERROR_RE.test(ctx.message))ctx.error=ctx.message;if(ctx.requiresSave)return;}workflowToast(message,kind||(WORKFLOW_ERROR_RE.test(String(message))?'error':undefined));};
 const workflowPersist=persist;
 persist=async function(...args){const ctx=WORKFLOW.active;let ok=false;try{ok=await workflowPersist(...args);return ok;}finally{
  if(!S.snap){if(ctx&&ctx===WORKFLOW.active){ctx.attempted=true;ctx.saved=ok;ctx.failed=!ok;}

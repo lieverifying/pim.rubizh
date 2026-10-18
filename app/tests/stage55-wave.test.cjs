@@ -71,3 +71,24 @@ test('D-74: the wave screen shows the total, the breakdowns, the reasons with co
  const html=h.run('launchWaveBlock()');
  for(const t of ['Перша хвиля','з 500','Постачальники','Категорії','Слоти','Не пройшли','Фото','Опублікувати хвилю \\(1\\)','Завжди в хвилі','Ніколи в хвилі','Рейтинг'])assert.match(html,new RegExp(t),t);
 });
+
+// Stage 5.5 review (silent-failure-hunter HIGH 1–3, code-reviewer MEDIUM 5).
+test('review: a second «Опублікувати хвилю» keeps the state before the FIRST wave, so undo returns to it',async()=>{
+ const h=setup(3);h.run("S.products.get('p02').photos=[];S.products.get('p02').pub=true;bumpData()");
+ assert.deepEqual(await h.click('ceWavePublish'),[]);assert.deepEqual(await h.click('ceWavePublish'),[]);
+ assert.deepEqual(await h.click('ceWaveUndo'),[]);
+ assert.deepEqual(J(h,"[...S.products.values()].map(p=>[p.id,p.pub])"),[['p00',true],['p01',true],['p02',true]],'p02 is published again as before the first wave');
+});
+test('review: a failed duplicate-model check blocks the wave publication with a visible reason (not silently skipped)',async()=>{
+ const h=setup(2);h.run("launchConditionHooks.mcPlan=()=>{throw new Error('broken plan')};bumpData()");
+ const w=wave(h);assert.match(String(w.blocked),/Перевірку дублів моделей не виконано/);assert.ok(w.warnings.some(x=>/дублів/.test(x)));
+ assert.match(h.run('launchWaveBlock()'),/disabled aria-describedby="wave-publish-why"/);
+ await h.click('ceWavePublish');assert.equal(J(h,"S.cfg.waveLastPublish??null"),null,'nothing published');
+ assert.match(h.run("document.querySelector('#toast').textContent"),/заблоковано/);
+});
+test('review: when saving fails, the wave publish and «Застосувати всі чисті описи» say «НЕ збережено», never success',async()=>{
+ const h=setup(2);h.run("Store.catalogCommit=async()=>{throw new Error('disk full')}");
+ await h.click('ceWavePublish');const t=h.run("document.querySelector('#toast').textContent");
+ assert.match(t,/НЕ збережено/);assert.doesNotMatch(t,/Опубліковано/);assert.equal(h.run("document.querySelector('#toast [role=\"alert\"]')?'alert':''"),'alert');
+ await h.click('ceApplyClean');assert.doesNotMatch(h.run("document.querySelector('#toast').textContent"),/^Застосовано/);
+});
