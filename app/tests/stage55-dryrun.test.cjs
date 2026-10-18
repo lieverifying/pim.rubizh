@@ -1,6 +1,6 @@
 'use strict';
-// Stage 5.5 (owner D-77, closes S52-03): a new supplier's goods reach the wave only after a clean dry run and the owner's
-// «Постачальника перевірено». The dry run checks the YML currency (not UAH or missing → error, import blocked), ambiguous
+// Stage 5.5 (owner D-77, closes S52-03): the dry run of a new supplier (since 5.5.2 it no longer keeps the supplier's goods
+// off the site; «Постачальника перевірено» stays). The dry run checks the YML currency (not UAH or missing → error, import blocked), ambiguous
 // numbers «1.250» / «1,250» (error, such prices are not accepted), Excel date serials (1900 and 1904 systems), photos (> 15 →
 // first 15 with a warning; «//» → https:), a repeated SKU with the same size and colour (conflict, no overwrite), the median
 // price against the current catalogue (> 3× → «Перевірте одиниці/валюту»), the share of rows without photo, brand, size or

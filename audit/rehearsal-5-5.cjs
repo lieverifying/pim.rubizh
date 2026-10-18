@@ -3,6 +3,8 @@
 // The supplier files of run10 are weeks old: the wave is computed as on a Monday with fresh prices — a SKU's direct payment
 // is judged by its own flags, without the data age (launchConditionHooks.fresh, in memory only; the backup is not changed).
 // Usage: node --expose-gc --max-old-space-size=9216 audit/rehearsal-5-5.cjs RUN10_BACKUP.json.gz OUT_DIR [SEED]
+// Stage 5.5.2: the wave (launchWave) was removed by the owner; this script reproduces run11 on tag pim-stage-5.5-verified only.
+if(!require('node:fs').readFileSync(require('node:path').join(__dirname,'../app/rubizh_pim.html'),'utf8').includes('const launchWave='))throw Error('Скрипт репетиции 5.5 работает только на pim-stage-5.5-verified: «Перша хвиля» удалена в 5.5.2');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),zlib=require('node:zlib'),{performance}=require('node:perf_hooks');
 const {createHarness}=require('../app/tests/isolated-harness.cjs'),{LightDOMParser}=require('./light-xml-parser.cjs');
 const [backupPath,outDir,seedArg]=process.argv.slice(2);if(!outDir)throw Error('Usage: RUN10_BACKUP OUT_DIR [SEED]');

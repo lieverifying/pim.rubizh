@@ -1,6 +1,6 @@
 'use strict';
 // Stage 5.5 (owner D-71): report-only checks of the supplier text against PIM data — prices, flags and lead times are NOT
-// changed; such products only stay out of the first wave (D-74). Synthetic data only.
+// changed; since 5.5.2 a hint column on «Відбір для сайту», never an exclusion. Synthetic data only.
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createHarness}=require('./isolated-harness.cjs');
 const J=(h,src)=>JSON.parse(h.run('JSON.stringify('+src+')'));
