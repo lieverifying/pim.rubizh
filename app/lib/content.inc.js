@@ -63,8 +63,9 @@ function ceSupplierNameRegexBuild(p){
  return new RegExp('(?:\\s*(?:від|от|by|компанії|компании|фірми|фирмы|бренду|бренда|виробника|производителя)\\s+)?[«"“]?(?<![\\p{L}\\d])(?:'+alt+')(?![\\p{L}\\d])[»"”]?','giu');
 }
 function ceTechTokens(t){return (String(t).match(CE_UNIT_RE)||[]).map(x=>x.replace(/\s+/g,'').toLowerCase());}
+// Stage 5.5.1 review (HIGH, D-67): a dash right before a digit is a sign («-20 °C»), never stripped as leading junk.
 function ceTidy(t,end){
- let x=String(t).replace(/\(\s*[,;:.]?\s*\)/g,'').replace(/\s+([,.;:!?)])/g,'$1').replace(/([(])\s+/g,'$1').replace(/([,;:])\s*(?=[,;:.!?])/g,'').replace(/\s{2,}/g,' ').replace(/^[\s,;:—–\-/]+/u,'').replace(/[\s,;:—–\-/]+$/u,'').trim();
+ let x=String(t).replace(/\(\s*[,;:.]?\s*\)/g,'').replace(/\s+([,.;:!?)])/g,'$1').replace(/([(])\s+/g,'$1').replace(/([,;:])\s*(?=[,;:.!?])/g,'').replace(/\s{2,}/g,' ').replace(/^(?:[\s,;:/]|[—–-](?!\d))+/u,'').replace(/[\s,;:—–\-/]+$/u,'').trim();
  if(x&&end&&!/[.!?…]$/.test(x))x+=end;return x;
 }
 // A table cell such as «105 мм» is data, never an empty line.
@@ -450,7 +451,9 @@ const LAUNCH_RATING_HINT='Рейтинг 0–100: свіжість даних (�
 const launchWave=memoByData(function(){
  const L=Math.max(50,Math.min(3000,Math.round(Number(S.cfg.waveLimit)||500))),capSup=Math.floor(L*0.4),capCat=Math.floor(L*0.15);
  const reasons={},rating={},eligible=[];
- for(const p of S.products.values()){if(p.archived||p.merged_into)continue;const r=launchReasons(p);if(r.length){reasons[p.id]=r;continue;}rating[p.id]=launchRating(p);eligible.push(p);}
+ // Stage 5.5.1 (owner D-81): the soft mode (default) keeps only the mandatory conditions; the rest become warnings.
+ const soft=launchSoft(),softWarn={};
+ for(const p of S.products.values()){if(p.archived||p.merged_into)continue;let r=launchReasons(p);if(soft){const s=launchSoftSplit(p,r);r=s.must;if(!r.length&&s.warn.length)softWarn[p.id]=s.warn;}if(r.length){reasons[p.id]=r;continue;}rating[p.id]=launchRating(p);eligible.push(p);}
  const order=(a,b)=>(b.waveMark==='always')-(a.waveMark==='always')||rating[b.id]-rating[a.id]||a.id.localeCompare(b.id);eligible.sort(order);
  const drop=(p,why)=>{reasons[p.id]=[why];delete rating[p.id];};
  // 14: one card of a colour group waiting for the owner's merge decision (S541-02).
@@ -472,21 +475,26 @@ const launchWave=memoByData(function(){
  const why={};for(const r of Object.values(reasons))for(const x of r){const k=x.replace(/\d+ грн/,'N грн');why[k]=(why[k]||0)+1;}
  const warnings=[...(blocked?[blocked]:[]),...(launchSlotErrors55?[`Не вдалося визначити слот «Свій комплект»: ${launchSlotErrors55} товарів`]:[]),...Object.entries(LAUNCH_SLOT_LABEL).filter(([k])=>(slots[k]||0)<8).map(([k,l])=>`Слот ${l}: лише ${slots[k]||0} товарів — комплект збирати важко`)];
  const names=Object.fromEntries((S.cfg.suppliers||[]).map(s=>[s.id,s.name]));
- return {limit:L,ids,blocked,rating:Object.fromEntries(ids.map(id=>[id,rating[id]])),reasons,why,warnings,renames:Object.fromEntries(ids.filter(id=>renames[id]).map(id=>[id,renames[id]])),
+ const softWarnings=Object.fromEntries(ids.filter(id=>softWarn[id]).map(id=>[id,softWarn[id]])),warnWhy={};for(const r of Object.values(softWarnings))for(const x of r)warnWhy[x]=(warnWhy[x]||0)+1;
+ return {mode:soft?'soft':'strict',limit:L,ids,blocked,softWarnings,warnWhy,rating:Object.fromEntries(ids.map(id=>[id,rating[id]])),reasons,why,warnings,renames:Object.fromEntries(ids.filter(id=>renames[id]).map(id=>[id,renames[id]])),
   breakdown:{suppliers:Object.fromEntries(Object.entries(sup).map(([k,v])=>[names[k]||k,v])),categories:cat,slots:Object.fromEntries(Object.entries(LAUNCH_SLOT_LABEL).map(([k,l])=>[l,slots[k]||0]))}};
 });
 function launchWaveBlock(){
  const w=launchWave(),rows=o=>Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><th scope="row">${esc(k)}</th><td class="num">${v}</td></tr>`).join(''),table=(caption,head,o)=>`<table><caption class="sr-only">${esc(caption)}</caption><thead><tr><th scope="col">${esc(head)}</th><th scope="col" class="num">Товарів</th></tr></thead><tbody>${rows(o)}</tbody></table>`;
  const pubNow=[...S.products.values()].filter(p=>!p.archived&&!w.ids.includes(p.id)&&(p.pub||finalDecision(p).state==='READY')&&!finalOwnerUnpublished(p)).length;
- return `<div class="panel" data-launch-wave style="border:2px solid var(--accent);margin-bottom:18px"><h2 style="margin-top:0">Перша хвиля запуску · режим «Запуск»</h2>
+ const cs=supplierCleanStatus(w),cleanBlock=w.mode==='soft'&&cs.pending.length;
+ return `<div class="panel" data-launch-wave style="border:2px solid var(--accent);margin-bottom:18px"><h2 style="margin-top:0">Перша хвиля запуску · ${w.mode==='soft'?'м’який режим':'режим «Запуск»'}</h2>
  <label class="chk small"><input type="checkbox" data-launch-strict ${S.cfg.waveStrict!==false?'checked':''}> Строгий режим «Запуск» (15 умов)</label>
+ <label class="chk small"><input type="checkbox" data-launch-soft ${launchSoft()?'checked':''}> М’який режим: обов’язкові лише фото, розміри (одяг і взуття), пряма оплата за свіжими даними, ціна, не «По заявці», готовність (не модерація, не обмежена група) і очищений текст постачальника (≥ ${SUPPLIER_CLEAN_MIN_WORDS} слів); назва, бренд, характеристики, повнота і схожість — лише попередження</label>
  <div class="stats"><div class="stat"><b style="color:var(--ok)">${w.ids.length}</b><span>з ${w.limit} у хвилі</span></div><div class="stat"><b>${Object.keys(w.reasons).length}</b><span>не пройшли</span></div><div class="stat"><b>${pubNow}</b><span>буде знято з сайту</span></div></div>
  <div class="row"><label class="f small">Ліміт хвилі<input type="number" min="50" max="3000" data-launch-cfg="waveLimit" value="${w.limit}" style="width:100px"></label><label class="f small">Мінімальна ціна, грн<input type="number" min="0" max="5000" data-launch-cfg="waveMinPrice" value="${Math.max(0,Math.min(5000,Number(S.cfg.waveMinPrice??500)))}" style="width:100px"></label><button class="btn small" data-act="ceWaveSaveCfg">Зберегти</button></div>
  <p class="small muted">${esc(LAUNCH_RATING_HINT)} Квоти: один постачальник — до 40 %, одна категорія верхнього рівня — до 15 %, у кожному з 8 слотів «Свій комплект» — щонайменше 8 товарів, якщо готових вистачає. Позначки в картці товару: «Завжди в хвилі» (не обходить умови) і «Ніколи в хвилі» (прибирає безумовно).</p>
  ${w.warnings.map(x=>`<p class="small ce-warning">${esc(x)}</p>`).join('')}
  <div class="row" style="align-items:flex-start;gap:18px"><div><h3>Постачальники</h3>${table('Хвиля за постачальниками','Постачальник',w.breakdown.suppliers)}</div><div><h3>Категорії</h3>${table('Хвиля за категоріями','Категорія',w.breakdown.categories)}</div><div><h3>Слоти</h3>${table('Хвиля за слотами «Свій комплект»','Слот',w.breakdown.slots)}</div></div>
  <details open><summary><b>Не пройшли</b> — причини</summary>${table('Причини, чому товари не пройшли','Причина',w.why)}</details>
- ${!w.ids.length||w.blocked?`<p class="small" id="wave-publish-why">${esc(w.blocked||'У хвилі немає товарів — див. «Не пройшли»')}</p>`:''}<div class="row" style="margin-top:12px"><button class="btn primary" data-act="ceWavePublish" ${w.ids.length&&!w.blocked?'':'disabled aria-describedby="wave-publish-why"'}>Опублікувати хвилю (${w.ids.length})</button>${S.cfg.waveLastPublish?'<button class="btn" data-act="ceWaveUndo">Скасувати публікацію хвилі</button>':''}</div></div>`;
+ ${w.mode==='soft'&&Object.keys(w.warnWhy).length?`<details><summary><b>Попередження</b> у товарів хвилі (не заважають публікації)</summary>${table('Попередження у товарів хвилі','Попередження',w.warnWhy)}</details>`:''}
+ <p class="small" id="wave-clean-status" role="status">Очищені описи постачальника (D-81): опубліковано ${cs.current} з ${cs.total}${cs.pending.length?` · чекають публікації: ${cs.pending.length}`:''}${cs.stale?` · текст постачальника змінився після публікації: ${cs.stale}`:''}. Оригінал постачальника не змінюється.</p>
+ ${!w.ids.length||w.blocked||cleanBlock?`<p class="small" id="wave-publish-why">${esc(w.blocked||(!w.ids.length?'У хвилі немає товарів — див. «Не пройшли»':'Спочатку «Опублікувати очищені описи постачальника»: без них на сайт піде текст постачальника без чистки'))}</p>`:''}<div class="row" style="margin-top:12px"><button class="btn" data-act="ceSupplierCleanPublish" ${cs.pending.length?'':'disabled aria-describedby="wave-clean-status"'}>Опублікувати очищені описи постачальника (${cs.pending.length})</button>${S.cfg.supplierCleanLast?'<button class="btn" data-act="ceSupplierCleanUndo">Скасувати публікацію очищених описів</button>':''}<button class="btn primary" data-act="ceWavePublish" ${w.ids.length&&!w.blocked&&!cleanBlock?'':'disabled aria-describedby="wave-publish-why"'}>Опублікувати хвилю (${w.ids.length})</button>${S.cfg.waveLastPublish?'<button class="btn" data-act="ceWaveUndo">Скасувати публікацію хвилі</button>':''}</div></div>`;
 }
 const render55=render;render=function(){
  const a=typeof document!=='undefined'?document.activeElement:null,act=a?.dataset?.act,attrs=act?['need','mark','sid','id'].map(k=>a.dataset[k]==null?'':`[data-${k}="${CSS.escape(a.dataset[k])}"]`).join(''):'',panel=act?a.closest('[data-ce-need],[data-launch-wave],[data-dry-run],[data-name-panel],[data-wave-mark]'):null,mark=panel?['ceNeed','launchWave','dryRun','namePanel','waveMark'].find(k=>k in panel.dataset):null;
@@ -498,8 +506,10 @@ const render55=render;render=function(){
 const waveBlock55=waveBlock;waveBlock=function(){return S.cfg.waveStrict===false?`<label class="chk small"><input type="checkbox" data-launch-strict> Строгий режим «Запуск» (15 умов)</label>`+waveBlock55():launchWaveBlock();};
 async function launchWavePublish(){
  const w=launchWave(),wave=new Set(w.ids);if(!wave.size){toast('У хвилі немає товарів');return;}if(w.blocked){toast(w.blocked,'error');return;}
+ // D-81: in the soft mode the wave goes out only with the published cleaned supplier texts; strict mode warns.
+ const cs=supplierCleanStatus(w);if(w.mode==='soft'&&cs.pending.length){toast(`Спочатку «Опублікувати очищені описи постачальника»: ${cs.pending.length} товарів хвилі без них`,'error');return;}
  const hide=[...S.products.values()].filter(p=>!p.archived&&!wave.has(p.id)&&!finalOwnerUnpublished(p)&&(p.pub||finalDecision(p).state==='READY'));
- if(!confirm(`Буде опубліковано: ${wave.size}. Буде знято з публікації: ${hide.length} (товари залишаться в PIM). Продовжити?`))return;
+ if(!confirm(`Буде опубліковано: ${wave.size}. Буде знято з публікації: ${hide.length} (товари залишаться в PIM).`+(cs.pending.length?` Без опублікованого очищеного опису: ${cs.pending.length} — на сайт піде поточний текст.`:'')+(cs.stale?` Текст постачальника змінився після публікації очищеного опису: ${cs.stale} — на сайті залишиться попередній очищений текст.`:'')+' Продовжити?'))return;
  try{const backup=await createAutoBackup('Перед публікацією хвилі',{force:true});if(!backup)await Store.set('contentengine/before_wave',backupData('Перед публікацією хвилі'));}catch(e){toast('Резервну копію не створено ('+(e?.message||e)+'). Хвилю не опубліковано.','error');return;}
  // A repeated publish keeps the state before the FIRST wave for every product already recorded (undo returns to it).
  const prev={...(S.cfg.waveLastPublish?.prev||{})};const remember=p=>{if(!prev[p.id])prev[p.id]=[p.pub??null,p.fieldMeta?.pub?.source??null,p.name,!!p.waveLaunchHidden];};const renameFailed=[];
@@ -522,8 +532,10 @@ const ceProductPanel55w=ceProductPanel;ceProductPanel=function(p){return launchM
 const ceAction55w=ceAction;ceAction=async function(a,t){
  if(a==='ceWavePublish'){await launchWavePublish();return;}
  if(a==='ceWaveUndo'){await launchWaveUndo();return;}
+ if(a==='ceSupplierCleanPublish'){await supplierCleanPublish();return;}
+ if(a==='ceSupplierCleanUndo'){await supplierCleanUndo();return;}
  if(a==='ceWaveMark'){const p=S.edit;if(!p)return;if(t.dataset.mark)p.waveMark=t.dataset.mark;else delete p.waveMark;markProduct(p);if(await persist55())toast(t.dataset.mark==='always'?'Позначено: завжди в хвилі':t.dataset.mark==='never'?'Позначено: ніколи в хвилі':'Позначку знято');render();return;}
- if(a==='ceWaveSaveCfg'){for(const el of $$('[data-launch-cfg]')){const k=el.dataset.launchCfg,v=Number(el.value);if(k==='waveLimit'&&Number.isFinite(v))S.cfg.waveLimit=Math.max(50,Math.min(3000,Math.round(v)));if(k==='waveMinPrice'&&Number.isFinite(v))S.cfg.waveMinPrice=Math.max(0,Math.min(5000,Math.round(v)));}const strict=$('[data-launch-strict]');if(strict)S.cfg.waveStrict=strict.checked;S.cfgDirty=true;bumpData();if(await persist55())toast(`Збережено: ліміт ${S.cfg.waveLimit??500}, мінімальна ціна ${S.cfg.waveMinPrice??500} грн`);render();return;}
+ if(a==='ceWaveSaveCfg'){for(const el of $$('[data-launch-cfg]')){const k=el.dataset.launchCfg,v=Number(el.value);if(k==='waveLimit'&&Number.isFinite(v))S.cfg.waveLimit=Math.max(50,Math.min(3000,Math.round(v)));if(k==='waveMinPrice'&&Number.isFinite(v))S.cfg.waveMinPrice=Math.max(0,Math.min(5000,Math.round(v)));}const strict=$('[data-launch-strict]');if(strict)S.cfg.waveStrict=strict.checked;const softBox=$('[data-launch-soft]');if(softBox)S.cfg.waveSoft=softBox.checked;S.cfgDirty=true;bumpData();if(await persist55())toast(`Збережено: ліміт ${S.cfg.waveLimit??500}, мінімальна ціна ${S.cfg.waveMinPrice??500} грн`);render();return;}
  return ceAction55w(a,t);
 };
 
@@ -567,3 +579,107 @@ const workflowAction55=workflowAction;workflowAction=async function(action,t){
  if(action==='wfDryRunVerify'){const r=supplierDryRunVerify(t.dataset.sid,supplierDryRun(S.imp));if(!r.ok){toast(r.why,'error');return;}if(await persist55())toast('Постачальника перевірено');render();return;}
  return workflowAction55(action,t);
 };
+
+// Stage 5.5.1 (owner D-81): the site description is the supplier's own text after the 5.5 cleaning (G1–G6: prices, contacts,
+// links, stock and lead times, «our shop», other shops, the supplier's name instead of the brand, repeated or empty headings,
+// lines without text) — no rewriting, no generation, no translation. Technical numbers stay (D-67, ceCleanUnit). The supplier
+// original is never changed: the cleaned text is stored next to it (p.supplierClean) only when the owner publishes it for
+// the wave, with an undo; the export sends it instead of the current text.
+const SUPPLIER_CLEAN_VERSION=1,SUPPLIER_CLEAN_MIN_WORDS=20;
+// A list marker is a bullet, or a dash followed by a space; «-20 °C» keeps its sign (review HIGH, D-67).
+const SUPPLIER_CLEAN_BULLET=/^(?:[•▪●◦·]+|[–—-]+(?=\s))\s*/u;
+const SUPPLIER_CLEAN_SPLIT=/((?<!&[a-zA-Z]{1,20});\s*|(?<=[!?])\s+|(?<=\.)\s+(?=[A-ZА-ЯІЇЄҐ]))/u;
+function supplierCleanSources(p){
+ const own=ceSupplierSource(p)||simpleSource(p);
+ return uniq([own,...(p.contentSourceKeys||[]).map(k=>S.content.get(k)?.originalDesc||S.content.get(k)?.d||'')].map(s=>String(s||'')).filter(s=>s.trim()));
+}
+function supplierCleanText(p){
+ const sources=supplierCleanSources(p),removed=[],commercialInTechnical=[],paras=[],seen=new Set();
+ let prev='';const titles=new Set([p.name,p.model_name,p.marketing_name_uk,p.fieldMeta?.name?.supplierOriginal].filter(Boolean).map(t=>norm(t)));
+ const done=[];
+ for(const source of sources){let pending=null;const emptyHeading=()=>{if(pending)removed.push({group:'G6',text:pending,reason:'заголовок без тексту'});pending=null;};
+  // The same description stored again (the price-list record of the product) is one text, not a second copy.
+  const whole=norm(ceSourcePlain(source));if(done.some(d=>d.includes(whole))){removed.push({group:'G6',text:'(повний повтор опису постачальника)',reason:'повтор опису'});continue;}done.push(whole);
+  for(const rawLine of ceSourcePlain(source).split('\n')){
+   const line=rawLine.replace(SUPPLIER_CLEAN_BULLET,'').trim();if(!line)continue;
+   if(/^[\p{P}\p{S}\s]+$/u.test(line)){removed.push({group:'G6',text:line,reason:'рядок без тексту'});continue;}
+   if(ceHeadingLike(line)){emptyHeading();const k='h:'+line.toLowerCase().replace(/[\s:]+$/,'');prev=k;if(seen.has(k))removed.push({group:'G6',text:line,reason:'повторний заголовок'});else{seen.add(k);pending=line;}continue;}
+   if(titles.has(norm(line))&&!ceTechTokens(line).length){removed.push({group:'G6',text:line,reason:'повтор назви товару'});continue;}
+   const parts=line.split(SUPPLIER_CLEAN_SPLIT),kept=[];
+   for(let i=0;i<parts.length;i+=2){
+    const unit=parts[i].replace(SUPPLIER_CLEAN_BULLET,'').trim(),sep=String(parts[i+1]||'').trim();if(!unit)continue;
+    let c=ceCleanUnit(unit,p);
+    // A specification value («440С», «G10») is data even without three letters: only G6 «рядок без тексту» is undone.
+    if(!c.text&&c.removed.length===1&&c.removed[0].group==='G6'&&/[\p{L}\p{N}]/u.test(unit))c={...c,text:ceTidy(unit,''),removed:[]};
+    for(const r of c.removed)removed.push(r);if(!c.text)continue;
+    // Short units are table values («3 мм» of two different rows): a short unit repeats only together with the unit before it
+    // (a block stored again for every SKU), a long one (25+ characters, as simpleDescription) repeats by itself.
+    const own=c.text.toLowerCase().replace(/\s+/g,' ').replace(/[\s.:;]+$/,''),key=own.length>=25?own:'pair:'+prev+'|'+own;prev=own;if(seen.has(key)){removed.push({group:'G6',text:c.text,reason:'повтор речення'});continue;}seen.add(key);
+    if(c.warning)commercialInTechnical.push(c.text);kept.push({text:c.text,sep});
+   }
+   if(!kept.length)continue;
+   if(pending){paras.push({heading:pending});pending=null;}
+   paras.push({text:kept.map((u,i)=>u.text+(i<kept.length-1?(u.sep?u.sep+' ':' '):'')).join('')});
+  }
+  emptyHeading();
+ }
+ const body=paras.filter(x=>x.text).map(x=>x.text).join('\n'),text=paras.map(x=>x.heading||x.text).join('\n');
+ const html=paras.map(x=>x.heading?`<p><strong>${htmlSafeText(x.heading)}</strong></p>`:`<p>${htmlSafeText(x.text)}</p>`).join('');
+ return {version:SUPPLIER_CLEAN_VERSION,html,text,short:body.replace(/\s+/g,' ').slice(0,280),words:(body.match(/[\p{L}\p{N}]+(?:[’'ʼ-][\p{L}\p{N}]+)*/gu)||[]).length,
+  removed,commercialInTechnical,signals:ceCommercialSignals(text,p),sourceHash:fnvHash(JSON.stringify(sources))};
+}
+const supplierCleanMemo=memoProd('supplierClean551',supplierCleanText);
+// The mandatory part of the cleaned text: not empty, ≥ 20 words, and no G1–G5 signal left (a technical sentence that keeps
+// such a fragment cannot be cut without touching its facts — D-67 — so it waits for the owner, never goes out).
+function supplierCleanProblems(c){
+ if(!c.words)return ['Очищений текст постачальника порожній'];
+ const r=[];if(c.words<SUPPLIER_CLEAN_MIN_WORDS)r.push(`Очищений текст постачальника: менше ${SUPPLIER_CLEAN_MIN_WORDS} слів`);
+ if(c.commercialInTechnical.length||c.signals.length)r.push('Очищений текст постачальника: комерційний текст у технічному реченні — потрібне рішення');
+ return r;
+}
+function supplierCleanApplies(p){return !!p&&p.fieldMeta?.desc?.source!=='manual'&&!classificationLocked(p,'desc');}
+function supplierCleanCurrent(p,c=supplierCleanMemo(p)){return p.supplierClean?.version===SUPPLIER_CLEAN_VERSION&&p.supplierClean.sourceHash===c.sourceHash&&p.supplierClean.html===c.html;}
+function launchSoft(){return S.cfg.waveSoft!==false;}
+// Soft mode (D-81): the name, the brand, the key characteristics, completeness and similarity of the 5.5 draft are warnings.
+// Everything else stays mandatory — the owner's marks, the PIM markup rules, the supplier checks (D-71), the dry run of a new
+// supplier and a commercial text in the name (S551-01) included. «Опис…» reasons are about the 5.5 draft, which the site does
+// not get under D-81 (the conflict and language remarks of that draft included — S551-03): they are warnings too.
+const LAUNCH_SOFT_WARN=[/^Назва:(?! комерційний текст)/,/^Немає справжнього бренду$/,/^Характеристики:/,/^Опис/];
+function launchSoftSplit(p,r){
+ const must=[],warn=[];for(const x of r)(LAUNCH_SOFT_WARN.some(re=>re.test(x))?warn:must).push(x);
+ if(must.length)return {must,warn};
+ if(supplierCleanApplies(p)){must.push(...supplierCleanProblems(supplierCleanMemo(p)));if(!ceAccepted(p)&&launchKeyFactsMemo(p)<3)warn.push('Характеристики: менше 3 ключових для категорії');}
+ return {must,warn};
+}
+function supplierCleanStatus(w=launchWave()){
+ let current=0,stale=0;const pending=[];const list=w.ids.map(id=>S.products.get(id)).filter(supplierCleanApplies);
+ for(const p of list){const c=supplierCleanMemo(p);if(supplierCleanCurrent(p,c)){current++;continue;}if(p.supplierClean)stale++;if(!supplierCleanProblems(c).length)pending.push(p);}
+ return {total:list.length,current,stale,pending};
+}
+async function supplierCleanPublish(){
+ const cs=supplierCleanStatus();if(!cs.pending.length){toast('Немає очищених описів, які чекають публікації');return;}
+ if(!confirm(`Для ${cs.pending.length} товарів хвилі на сайт піде текст постачальника після чистки (ціни, контакти, наявність і строки, чужі магазини вилучено; технічні дані збережено). Оригінал постачальника не змінюється. Продовжити?`))return;
+ try{const backup=await createAutoBackup('Перед публікацією очищених описів',{force:true});if(!backup)await Store.set('contentengine/before_supplier_clean',backupData('Перед публікацією очищених описів'));}catch(e){toast('Резервну копію не створено ('+(e?.message||e)+'). Описи не опубліковано.','error');return;}
+ // A repeated publish keeps the state before the FIRST one for every product already recorded (undo returns to it).
+ const prev={...(S.cfg.supplierCleanLast?.prev||{})},at=Date.now();
+ for(const p of cs.pending){if(!Object.hasOwn(prev,p.id))prev[p.id]=p.supplierClean?structuredClone(p.supplierClean):null;const c=supplierCleanMemo(p);
+  p.supplierClean={version:SUPPLIER_CLEAN_VERSION,html:c.html,short:c.short,sourceHash:c.sourceHash,at};p.syncStatus='pending';markProduct(p);}
+ S.cfg.supplierCleanLast={at,prev};S.cfgDirty=true;bumpData();
+ if(!(await persist55())){render();return;}
+ toast(`Опубліковано очищених описів: ${cs.pending.length}`);render();
+}
+async function supplierCleanUndo(){
+ const prev=S.cfg.supplierCleanLast?.prev;if(!prev)return;
+ // Review MEDIUM: a product already on the site gets its previous (uncleaned) text back with the next export — say so.
+ const live=Object.keys(prev).filter(id=>S.products.get(id)?.pub===true).length;
+ if(!confirm('Повернути описи до стану перед публікацією очищених текстів?'+(live?` ${live} з цих товарів уже опубліковано: на сайт знову піде текст постачальника без чистки. Спершу краще скасувати публікацію хвилі.`:'')))return;
+ for(const [id,old] of Object.entries(prev)){const p=S.products.get(id);if(!p)continue;if(old)p.supplierClean=old;else delete p.supplierClean;p.syncStatus='pending';markProduct(p);}
+ S.cfg.supplierCleanLast=null;S.cfgDirty=true;bumpData();
+ if(!(await persist55())){render();return;}
+ toast('Публікацію очищених описів скасовано');render();
+}
+// The export (contract v3 and the older feed) sends the published cleaned text; a manual description keeps priority.
+const finalDescription551=finalDescription;
+finalDescription=function(p){return p?.supplierClean?.html&&supplierCleanApplies(p)?p.supplierClean.html:finalDescription551(p);};
+const cePublishedDescription551=cePublishedDescription;
+cePublishedDescription=function(p){return p?.supplierClean?.html&&supplierCleanApplies(p)?p.supplierClean.html:cePublishedDescription551(p);};

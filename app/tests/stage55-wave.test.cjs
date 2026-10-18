@@ -13,7 +13,8 @@ function good(h,id,{brand='Fixture',cat='Рюкзаки, сумки та бау�
  p.variants[0].offers={[sid]:{...p.variants[0].offers['supplier-a'],cost,payout:cost}};h.add(p);return p;
 }
 // The fixtures stand for a finished pipeline: description accepted, data fresh, READY on the PIM side.
-const finish="for(const p of S.products.values()){const i=ceBuildIndex();p.contentDraft=ceChoose(p,i);ceApply(p);}launchConditionHooks.fresh=()=>true;launchConditionHooks.ready=()=>true;bumpData();";
+// Stage 5.5.1 (D-81): these are the strict «Запуск» mode tests; the soft mode (default since 5.5.1) has its own file.
+const finish="S.cfg.waveSoft=false;for(const p of S.products.values()){const i=ceBuildIndex();p.contentDraft=ceChoose(p,i);ceApply(p);}launchConditionHooks.fresh=()=>true;launchConditionHooks.ready=()=>true;bumpData();";
 function setup(n=6,opts){const h=createHarness();h.run("S.cfg.suppliers.push({id:'supplier-b',name:'Supplier B',priority:1})");for(let i=0;i<n;i++)good(h,'p'+String(i).padStart(2,'0'),opts);h.run(finish);return h;}
 const wave=h=>J(h,'launchWave()');
 
@@ -50,7 +51,7 @@ test('D-74: limit, the 40 % supplier quota and the 15 % top-category quota; ties
 
 test('D-74: the same wave after a re-import of unchanged data; computing 3000 products takes ≤ 2 s',()=>{
  const h=createHarness();for(let i=0;i<3000;i++)good(h,'q'+String(i).padStart(4,'0'),{cat:['Рюкзаки, сумки та баули / Рюкзаки / Тактичні рюкзаки','Взуття / Тактичні черевики','Підсумки / Підсумки для магазинів','Одяг та форма / Куртки'][i%4]});
- h.run("for(const p of S.products.values()){p.fieldMeta.desc.source='manual';}launchConditionHooks.fresh=()=>true;launchConditionHooks.ready=()=>true;bumpData()");
+ h.run("S.cfg.waveSoft=false;for(const p of S.products.values()){p.fieldMeta.desc.source='manual';}launchConditionHooks.fresh=()=>true;launchConditionHooks.ready=()=>true;bumpData()");
  const a=wave(h);h.run("for(const p of S.products.values())markProduct(p);bumpData()");
  const t=Date.now();const b=wave(h);const ms=Date.now()-t;assert.ok(ms<=2000,'3000 products in '+ms+' ms');
  assert.deepEqual(b.ids,a.ids,'same wave');assert.ok(a.ids.length>0);
