@@ -9509,8 +9509,15 @@ async function selSave(msg){
  if(msg)toast(msg);render();
 }
 function vSiteSelect(){return '<h1>Відбір для сайту</h1>'+selBlock();}
+// Stage 5.5.4 (owner, class A): once the selection holds at least one product of the catalogue, EVERY send to the site — full
+// sync, «Опубликовать изменения», the automatic publish after an import — carries only the chosen READY products; a product
+// the site already shows and that is not chosen goes to hide_ids. New products of an import are not chosen, so they never
+// reach the site by themselves. Ids left over from deleted products do not count (an emptied catalogue sends as before).
+function selActive(){const c=selChosen();for(const id in c)if(c[id]&&S.products.has(id))return true;return false;}
+const selWire554=pimSiteWire;pimSiteWire=function(){const w=selWire554(...arguments);if(!selActive())return w;const c=selChosen(),products=w.products.filter(p=>c[p.id]);return {...w,products,catalog_revision:fnvHash(stableValue105(products.map(finalModelHash)))};};
+const selHide554=finalExplicitHideIds;finalExplicitHideIds=function(published){const out=new Set(selHide554(published));if(selActive()){const c=selChosen();for(const id of Object.keys(published||{}))if(!c[id]&&S.products.has(id))out.add(id);}return [...out].sort();};
 // The «Готовність» page keeps only a link: its own checks are heavy, the selection screen is clicked often.
-waveBlock=function(){const n=Object.keys(selChosen()).length;return `<div class="panel" style="border:2px solid var(--accent);margin-bottom:18px"><b>Відбір для сайту</b> · обрано ${n} <button class="btn small" data-view="siteSelect">Відкрити</button></div>`;};
+waveBlock=function(){const n=Object.keys(selChosen()).filter(id=>S.products.has(id)).length;return `<div class="panel" style="border:2px solid var(--accent);margin-bottom:18px"><b>Відбір для сайту</b> · обрано ${n} <button class="btn small" data-view="siteSelect">Відкрити</button></div>`;};
 const ceAction552=ceAction;ceAction=async function(a,t){
  if(a==='ceSelToggle'){const id=t.dataset.id,p=S.products.get(id);if(!p||siteBlocked(p))return;const c=selChosen();if(c[id])delete c[id];else c[id]=true;await selSave();return;}
  if(a==='ceSelFilter'){for(const el of $$('[data-sel-f]'))SEL_UI.f[el.dataset.selF]=String(el.value??'').trim();SEL_UI.page=0;render();return;}
