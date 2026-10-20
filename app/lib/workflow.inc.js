@@ -109,12 +109,15 @@ async function workflowSourceBody(response,limit,type,modified){if(+response.hea
 // (POST {site}/pim/supplier-fetch, only listed supplier domains) and passes it through unchanged.
 async function workflowDownloadViaSite(url,limit){
  if(typeof siteReady!=='function'||!siteReady())throw Error('Не вдалося скачати прайс напряму (CORS або мережа). Для таких постачальників PIM завантажує прайс через сайт: вкажіть адресу API сайту і ключ у «Публікації на сайт».');
- const c=siteCfg(),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),180000);let response;
+ const c=siteCfg();if(!/^https:\/\//i.test(c.url))throw Error('Адреса API сайту має починатися з https:// — ключ PIM не надсилається без шифрування.');
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),180000);let response;
  try{
   try{response=await fetch(c.url.replace(/\/+$/,'')+'/pim/supplier-fetch',{method:'POST',signal:controller.signal,credentials:'omit',cache:'no-store',headers:{'Content-Type':'application/json',Authorization:'Bearer '+c.key},body:JSON.stringify({url})});}
-  catch(error){if(error.name==='AbortError')throw Error('Сайт не віддав прайс за 180 секунд.');throw Error('Прайс не скачано напряму (CORS), і немає зв’язку з сайтом ('+c.url+') для завантаження через сервер.');}
-  if(!response.ok){let j=null;try{j=await response.json();}catch{}throw Error('Сайт не завантажив прайс: '+((j&&j.error)||('HTTP '+response.status))+(j&&j.error_code?' ['+j.error_code+']':''));}
-  return {...await workflowSourceBody(response,limit,response.headers.get('x-supplier-content-type'),response.headers.get('x-supplier-last-modified')),url,via:'site'};
+  catch(error){if(error.name==='AbortError')throw Error('Сайт не віддав прайс за 180 секунд.');throw Error('Прайс не скачано напряму (CORS), і немає зв’язку з сайтом ('+c.url+') для завантаження через сервер'+(error.message&&error.name!=='TypeError'?': '+error.message:'')+'.');}
+  // A non-JSON error body (proxy, login page) leaves only the HTTP code; the site's text never carries the link query.
+  if(!response.ok){let j=null;try{j=await response.json();}catch{}const text=typeof j?.error==='string'?j.error.replace(/\?\S*/g,'').slice(0,300):'HTTP '+response.status;throw Error('Сайт не завантажив прайс: '+(response.status===401?'невірний ключ PIM (Публікація на сайт → ключ)':text)+(typeof j?.error_code==='string'?' ['+j.error_code+']':''));}
+  try{return {...await workflowSourceBody(response,limit,response.headers.get('x-supplier-content-type'),response.headers.get('x-supplier-last-modified')),url,via:'site'};}
+  catch(error){if(error.name==='TypeError')throw Error('Зв’язок із сайтом обірвався під час передачі прайсу. Повторіть оновлення.');throw error;}
  }catch(error){if(error.name==='AbortError')throw Error('Сайт не віддав прайс за 180 секунд.');throw error;}finally{clearTimeout(timer);}
 }
 async function workflowDownloadSource(raw){const url=workflowSourceURL(raw),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),45000),limit=64*1024*1024;let response;
@@ -122,7 +125,8 @@ async function workflowDownloadSource(raw){const url=workflowSourceURL(raw),cont
   try{response=await fetch(url,{signal:controller.signal,credentials:'omit',cache:'no-store'});}
   catch(error){if(error.name==='AbortError')throw Error('Скачивание прайса заняло больше 45 секунд.');if(error.name==='TypeError'){clearTimeout(timer);return await workflowDownloadViaSite(url,limit);}throw error;}
   if(!response.ok)throw Error('Поставщик вернул HTTP '+response.status);
-  return {...await workflowSourceBody(response,limit,response.headers.get('content-type'),response.headers.get('last-modified')),url,via:'direct'};
+  try{return {...await workflowSourceBody(response,limit,response.headers.get('content-type'),response.headers.get('last-modified')),url,via:'direct'};}
+  catch(error){if(error.name==='TypeError')throw Error('Зв’язок із постачальником обірвався під час скачування прайсу. Повторіть оновлення.');throw error;}
  }catch(error){if(error.name==='AbortError')throw Error('Скачивание прайса заняло больше 45 секунд.');throw error;}finally{clearTimeout(timer);}
 }
 function workflowReadWorkbook(buffer,name){
@@ -148,17 +152,18 @@ async function workflowFetchSource(sid,{scheduled=false}={}){
    const ok=await applyImport({automatic:true});if(!ok)throw Error('Автоматическое обновление не применено. Проверьте результат в разделе проблем.');S.view=previousView;render();return {status:'applied'};
   }
   S.view='import';render();toast(I.sourceProfileValid?'Прайс скачан. Проверьте и примените импорт.':'Прайс скачан. Один раз проверьте колонки и примените импорт для подтверждения профиля.');return {status:'review'};
- }catch(error){if(S.snap){cancelImport(true);S.imp=null;}const current=S.cfg.suppliers.find(s=>s.id===sid);if(current?.source){current.source.lastAttempt=Date.now();current.source.lastError=error.message||String(error);S.cfgDirty=true;bumpData();await persist();}throw error;}
+ }catch(error){if(S.snap){cancelImport(true);S.imp=null;}const current=S.cfg.suppliers.find(s=>s.id===sid);if(current?.source){current.source.lastAttempt=Date.now();current.source.lastError=error.message||String(error);S.cfgDirty=true;bumpData();if(!await persist())workflowToast('Помилку джерела не вдалося зберегти: '+current.source.lastError);}throw error;}
 }
 function workflowRecordSourceProfile(I,automatic){if(!I.sourceId||I.sup!==I.sourceId)return;const s=S.cfg.suppliers.find(s=>s.id===I.sourceId);if(!s?.source)return;if(!automatic)s.source.profile={urlHash:I.sourceURLHash,headers:fnvHash(JSON.stringify((I.rows[I.hdr]||[]).map(String))),sheet:I.sheet,hdr:I.hdr,map:structuredClone(I.map),reviewedAt:Date.now()};s.source.lastApplied=Date.now();delete s.source.lastError;S.cfgDirty=true;}
 // Stage 5.6-1: the owner sees the result of the last refresh per supplier, with the reason of every failure.
-const WORKFLOW_REFRESH_LABELS={applied:'оновлено',review:'потрібна перевірка',error:'помилка',busy:'зайнято — повторіть пізніше',skipped:'не перевірено — спершу перевірте імпорт попереднього прайсу'};
+const WORKFLOW_REFRESH_LABELS={applied:'оновлено',review:'потрібна перевірка',error:'помилка',busy:'не перевірено — PIM зайнята (відкрита картка, імпорт або незбережені зміни)',skipped:'не перевірено — спершу перевірте імпорт попереднього прайсу'};
 function workflowRefreshLabel(status){return WORKFLOW_REFRESH_LABELS[status]||status;}
 async function workflowRefreshSources(scheduled=false){let applied=0,review=0,failed=0,stop=false;const rows=[];for(const s of [...S.cfg.suppliers]){const source=s.source;if(s.disabled||!source?.url||scheduled&&(!source.enabled||Date.now()-(+source.lastAttempt||0)<Math.max(1,+source.hours||24)*3600000))continue;
- if(stop||!workflowCanFetch()){rows.push({sid:s.id,name:s.name,status:stop?'skipped':'busy'});stop=true;continue;}
- try{const result=await workflowFetchSource(s.id,{scheduled});rows.push({sid:s.id,name:s.name,status:result.status,via:s.source?.lastVia||null});if(result.status==='applied')applied++;else if(result.status==='review'){review++;stop=true;}}catch(error){failed++;rows.push({sid:s.id,name:s.name,status:'error',reason:error.message||String(error)});if(!scheduled)workflowToast(s.name+': '+(error.message||error));}
- }WORKFLOW.lastRefresh={at:Date.now(),rows};if(!scheduled)toast(`Обновлено: ${applied}. Нужна проверка: ${review}. Ошибок: ${failed}.`);if(failed&&WORKFLOW.active)WORKFLOW.active.error='Не удалось обновить '+failed+' источников. Причины указаны в разделе «Проблемы».';return {applied,review,failed};}
-function workflowRefreshPanel(){const last=WORKFLOW.lastRefresh;if(!last?.rows?.length)return '';return `<div class="panel" data-refresh-result><h2>Оновлення прайсів за посиланнями · ${esc(fmtDate(last.at))}</h2>${last.rows.map(r=>`<div class="row workflow-supplier-row"><b>${esc(r.name)}</b><span class="spacer"></span><span class="${r.status==='error'?'finance-bad':r.status==='applied'?'':'small'}">${esc(workflowRefreshLabel(r.status))}${r.status==='applied'&&r.via==='site'?' (через сайт)':''}${r.reason?': '+esc(r.reason):''}</span></div>`).join('')}</div>`;}
+ if(stop||!workflowCanFetch()){rows.push({sid:s.id,name:s.name,status:stop==='review'?'skipped':'busy'});stop=stop||'busy';continue;}
+ try{const result=await workflowFetchSource(s.id,{scheduled});rows.push({sid:s.id,name:s.name,status:result.status,via:s.source?.lastVia||null});if(result.status==='applied')applied++;else if(result.status==='review'){review++;stop='review';}}catch(error){failed++;rows.push({sid:s.id,name:s.name,status:'error',reason:error.message||String(error)});if(!scheduled)workflowToast(s.name+': '+(error.message||error));}
+ }// Kept in the PIM settings (survives a reload); a scheduled pass with nothing due does not wipe the last result.
+ if(rows.length||!scheduled){WORKFLOW.lastRefresh={at:Date.now(),scheduled,rows};S.cfg.lastSourceRefresh=WORKFLOW.lastRefresh;S.cfgDirty=true;bumpData();await persist();}if(!scheduled)toast(`Обновлено: ${applied}. Нужна проверка: ${review}. Ошибок: ${failed}.`);if(failed&&WORKFLOW.active)WORKFLOW.active.error='Не удалось обновить '+failed+' источников. Причины указаны в разделе «Проблемы».';return {applied,review,failed};}
+function workflowRefreshPanel(){const last=WORKFLOW.lastRefresh||S.cfg.lastSourceRefresh;if(!last?.rows?.length)return '';return `<div class="panel" data-refresh-result><h2>Оновлення прайсів за посиланнями · ${esc(fmtDate(last.at))}${last.scheduled?' (автоматично)':''}</h2>${last.rows.map(r=>`<div class="row workflow-supplier-row"><b>${esc(r.name)}</b><span class="spacer"></span><span class="${r.status==='error'?'finance-bad':r.status==='applied'?'':'small'}">${esc(workflowRefreshLabel(r.status))}${r.status==='applied'&&r.via==='site'?' (через сайт)':''}${r.reason?': '+esc(r.reason):''}</span></div>`).join('')}</div>`;}
 function workflowSchedulerStart(){if(WORKFLOW.timer)return;WORKFLOW.timer=setInterval(async()=>{if(WORKFLOW.active||!workflowCanFetch())return;const due=S.cfg.suppliers.some(s=>!s.disabled&&s.source?.enabled&&s.source?.url&&Date.now()-(+s.source.lastAttempt||0)>=Math.max(1,+s.source.hours||24)*3600000);if(!due)return;const ctx=workflowActionStart('wfRefreshSources',{textContent:'Автоматическое обновление прайсов'});try{await workflowRefreshSources(true);}catch(error){workflowActionError(ctx,error);}finally{workflowActionFinish(ctx);}},60000);}
 const workflowStartup=v10Startup;v10Startup=async function(){await workflowStartup();workflowSchedulerStart();};
 async function workflowAction(action,t){

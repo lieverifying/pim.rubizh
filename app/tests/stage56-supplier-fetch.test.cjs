@@ -69,3 +69,19 @@ test('5.6-1 «Обновить прайсы по ссылкам»: per supplier 
  assert.doesNotMatch(html,/SECRETKEY|publicKey/,'the link key is never shown');
  assert.equal(h.run("workflowRefreshLabel('applied')"),'оновлено');
 });
+
+test('5.6-1 review fixes: the key never goes to the supplier or over http; 401 explains the key; the result survives a reload',async()=>{
+ const h=await harness();const calls=network(h,()=>new Response(JSON.stringify({ok:false,error:'Неверный ключ PIM'}),{status:401}));
+ await assert.rejects(h.run("workflowFetchSource('supplier-a')"),/невірний ключ PIM/);
+ assert.ok(!calls[0].opt.headers||!('Authorization' in calls[0].opt.headers),'the direct supplier request carries no PIM key');
+ const plain=await harness();plain.run(`S.cfg.siteApi={url:'http://site.invalid/api',key:${JSON.stringify(KEY)}};`);const pc=network(plain,()=>new Response('x'));
+ await assert.rejects(plain.run("workflowFetchSource('supplier-a')"),/https:\/\//);assert.equal(pc.length,1,'nothing is sent to an http site');
+ // A site error text with a query never reaches the owner's screen.
+ const q=await harness();network(q,()=>new Response(JSON.stringify({ok:false,error:'Помилка https://x.example/feed.yml?publicKey=SECRETKEY',error_code:'UPSTREAM_HTTP'}),{status:502}));
+ await assert.rejects(q.run("workflowFetchSource('supplier-a')"),e=>!/SECRETKEY|publicKey/.test(e.message));
+ // The refresh result is kept in the PIM settings; a scheduled pass with nothing due keeps it.
+ const r=await harness();network(r,()=>new Response(JSON.stringify({ok:false,error:'Постачальник не віддав файл вчасно.',error_code:'TIMEOUT'}),{status:504}));
+ await r.run('workflowRefreshSources(false)');r.run('WORKFLOW.lastRefresh=null');
+ assert.match(r.run('workflowRefreshPanel()'),/помилка[\s\S]*TIMEOUT/,'shown from the saved settings after a reload');
+ r.run("S.cfg.suppliers[0].source.lastAttempt=Date.now()");await r.run('workflowRefreshSources(true)');assert.match(r.run('workflowRefreshPanel()'),/TIMEOUT/);
+});
