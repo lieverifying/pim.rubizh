@@ -11230,7 +11230,9 @@ function productionCandidateRows(rows,data){
  return out;
 }
 async function productionPlan(rows){
- const source=productionRowsData(rows);if(!source.products.length)throw Error('EXISTING_DATABASE_EMPTY: відновіть існуючу базу, порожня migration заборонена');
+ // 5.6.2 (owner decision 21.10): the catalog starts from zero and the old server database is not reachable — an empty
+ // device starts a fresh production store instead of being blocked.
+ const source=productionRowsData(rows);
  const saved={...S};let candidate,pricesBefore,pricesAfter,report;
  try{
   productionHydrate(source);pricesBefore=productionPrices();classificationEnable();releaseStorage.gates(S.cfg);S.cfg.storageBucketVersion=2;
@@ -11259,12 +11261,11 @@ async function productionBackup(rows,label){
  const {blob,gz}=await releaseStorage.encodeBlob(rows,productionLocalSnapshot(),{release:PRODUCTION_RELEASE_VERSION,rc_commit:PRODUCTION_RC_COMMIT,label,source_sha256},(phase,done,total)=>{if(done===total||done%8===0){PRODUCTION_MIGRATION.progress=phase==='rows'?'Резервна копія: записи '+done+' / '+total:'Резервна копія: файли '+done+' / '+total;if(typeof document!=='undefined'&&typeof requestAnimationFrame==='function')render();}}),backup={id,blob,gz,sha256:await releaseStorage.blobDigest(blob),source_sha256,at:Date.now(),filename:'rubizh-pim-'+id+'.json'+(gz?'.gz':'')};
  PRODUCTION_MIGRATION.progress='Перевіряємо збережену повну копію…';render();await workflowYield();await releaseStorage.saveBackup(backup);const checked=await releaseStorage.readBackup(backup);if(await releaseStorage.rowsDigest(checked.rows)!==source_sha256)throw Error('BACKUP_VALUES_READBACK_FAILED');return backup;
 }
-async function productionSaveExternal(backup){if(!await offerDownload(backup.filename,backup.blob))return false;return confirm('Переконайтеся, що повний backup '+backup.filename+' збережено на диск. SHA256: '+backup.sha256+'. Продовжити?');}
 async function productionApply(){
  const plan=PRODUCTION_MIGRATION.plan;if(!plan)throw Error('MIGRATION_PREVIEW_REQUIRED');
  PRODUCTION_MIGRATION.progress='Перевіряємо, що дані не змінилися…';render();await workflowYield();const current=await productionCapture();if(current.some(r=>r.key==='meta/production_release_10_9_3'&&r.data.version===PRODUCTION_RELEASE_VERSION)){await productionLoad();PRODUCTION_MIGRATION.plan=null;return {...plan.report,ALREADY_MIGRATED:true};}if(await releaseStorage.rowsDigest(current)!==plan.report.source_sha256)throw Error('STALE_MIGRATION: повторіть dry-run');
+ // 5.6.2 (owner decision): no backup file is offered to the owner; the verified in-browser copy stays for the automatic rollback.
  PRODUCTION_MIGRATION.state='backing-up';const backup=await productionBackup(current,'Перед production migration 10.9.3');PRODUCTION_MIGRATION.backupId=backup.id;
- if(!await productionSaveExternal(backup)){PRODUCTION_MIGRATION.state='preview';throw Error('EXTERNAL_BACKUP_REQUIRED: migration не застосована');}
  const revision=current.find(x=>x.key==='sync/local_revision')?.data||0,rows=releaseStorage.clone(plan.rows),put=(key,data)=>{const row=rows.find(x=>x.key===key);if(row)row.data=data;else rows.push({key,data});};
  put('sync/local_revision',revision+1);put('meta/production_release_10_9_3',{version:PRODUCTION_RELEASE_VERSION,rc_commit:PRODUCTION_RC_COMMIT,backup_id:backup.id,backup_sha256:backup.sha256,source_sha256:plan.report.source_sha256,at:Date.now(),sync_enabled:false,autoprices_enabled:false});
  PRODUCTION_MIGRATION.state='applying';await releaseStorage.write(Store.db,current,rows);
@@ -11274,7 +11275,7 @@ async function productionApply(){
   const expected=new Map(plan.candidate.products.map(p=>[p.id,p]));if(got.products.length!==expected.size||got.products.some(p=>!expected.has(p.id)||stableValue105(p)!==stableValue105(expected.get(p.id)))||stableValue105(got.cfg)!==stableValue105(plan.candidate.cfg))throw Error('MIGRATION_READBACK_FAILED');
   await productionWarmView();
  }catch(error){await releaseStorage.rollback(Store.db,await releaseStorage.readBackup(backup),{operationalGates:false,bumpRevision:false});await productionLoad();PRODUCTION_MIGRATION.state='blocked';throw error;}
- PRODUCTION_MIGRATION.state='ready';PRODUCTION_MIGRATION.lastReport={...plan.report,BACKUP_PATH:releaseStorage.BACKUP_DATABASE+'/backups/'+backup.id,BACKUP_FORMAT:releaseStorage.FORMAT,BACKUP_SHA256:backup.sha256,PERSISTED_VERIFIED:true,EXTERNAL_BACKUP_USER_CONFIRMED:true,LOCAL_MIGRATION_TRANSACTIONS:1,SHOP_WRITES:0};delete PRODUCTION_MIGRATION.lastReport.PRODUCTION_WRITES;PRODUCTION_MIGRATION.plan=null;
+ PRODUCTION_MIGRATION.state='ready';PRODUCTION_MIGRATION.lastReport={...plan.report,BACKUP_PATH:releaseStorage.BACKUP_DATABASE+'/backups/'+backup.id,BACKUP_FORMAT:releaseStorage.FORMAT,BACKUP_SHA256:backup.sha256,PERSISTED_VERIFIED:true,EXTERNAL_BACKUP_USER_CONFIRMED:false,LOCAL_MIGRATION_TRANSACTIONS:1,SHOP_WRITES:0};delete PRODUCTION_MIGRATION.lastReport.PRODUCTION_WRITES;PRODUCTION_MIGRATION.plan=null;
  for(const r of rows)if(!/^(autobak\/|autobak_meta\/|safety\/|docfile\/|sync\/|auth\/)/.test(r.key))sbMark(r.key);
  return PRODUCTION_MIGRATION.lastReport;
 }
@@ -11297,13 +11298,57 @@ async function productionLoad(){
  if(PRODUCTION_MIGRATION.state==='ready')await productionWarmView();
 }
 async function productionRollback(id=PRODUCTION_MIGRATION.backupId){
- const backup=await releaseStorage.getBackup(id),snapshot=await releaseStorage.readBackup(backup);PRODUCTION_MIGRATION.state='rolling-back';const rescue=await productionBackup(await productionCapture(),'Перед rollback 10.9.3');if(!await productionSaveExternal(rescue))throw Error('ROLLBACK_RESCUE_BACKUP_REQUIRED');
+ const backup=await releaseStorage.getBackup(id),snapshot=await releaseStorage.readBackup(backup);PRODUCTION_MIGRATION.state='rolling-back';const rescue=await productionBackup(await productionCapture(),'Перед rollback 10.9.3');
  const result=await releaseStorage.rollback(Store.db,snapshot,{localStorage});await productionLoad();PRODUCTION_MIGRATION.state='rolled-back';PRODUCTION_MIGRATION.lastReport={...result,ROLLBACK_BACKUP:id,RESCUE_BACKUP:rescue.id};return result;
 }
-const productionBeforeLoad=sbBeforeLoad;sbBeforeLoad=async function(){if(!productionMode())return productionBeforeLoad(...arguments);if(!sbCfg()){SB.status='off';return true;}await Store.init();for(;;){if(!sbSession())await sbLoginDialog('Увійдіть для доступу до існуючої бази. Migration ще не застосована.');try{await sbToken();SB.status='ok';return true;}catch(e){if(!e.auth&&sbSession()?.expires_at>Date.now()){SB.status='offline';return true;}lsSet(SB_LS.session,null);await sbLoginDialog('Потрібне підтвердження входу.');}}};
+// 5.6.2 (owner decision 21.10): one login for CRM and PIM — the owner's e-mail and password. The old cloud database
+// (rubizh_sb) is not used in production: nobody can sign in to it. PIM signs in through the site's Staff API (same site,
+// credentials) and takes the API address and its key from /api/staff/pim/connection (OWNER); the owner never types the key.
+const productionSbCfg=sbCfg;sbCfg=function(){return productionMode()?null:productionSbCfg(...arguments);};
+const PRODUCTION_SITE={connection:null,note:''};
+function productionSiteOrigin(){const h=location.hostname||'';if(/^pim\./i.test(h))return location.protocol+'//'+h.slice(4)+(location.port?':'+location.port:'');try{if(siteCfg().url)return new URL(siteCfg().url).origin;}catch{}return 'https://rubizh.shop';}
+async function productionStaff(path,{method='GET',body,csrf}={}){
+ let r;try{r=await fetch(productionSiteOrigin()+'/api/staff'+path,{method,credentials:'include',headers:{...(body?{'Content-Type':'application/json'}:{}),...(csrf?{'X-CSRF-Token':csrf}:{})},body:body?JSON.stringify(body):undefined});}
+ catch{throw Object.assign(Error('Немає зв’язку з сайтом. Перевірте інтернет і спробуйте ще раз.'),{code:'NETWORK'});}
+ let j=null;try{j=await r.json();}catch{}
+ if(!r.ok||!j||j.ok===false)throw Object.assign(Error(j?.error?.message||('Сайт відповів '+r.status)),{code:j?.error?.code||'HTTP_'+r.status,status:r.status});
+ return j;
+}
+function productionLoginDialog(note){return new Promise(resolve=>{
+ const box=document.createElement('div');box.id='pimLogin';box.style.cssText='position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.72)';
+ box.innerHTML='<form class="panel" style="width:min(420px,92vw);margin:0"><h2 style="margin-top:0">РУБІЖ PIM · вхід</h2><p class="small muted" style="margin-top:0">'+esc(note||'Той самий вхід, що й у CRM: ваш email і пароль.')+'</p><label class="f">Email<input id="pimLoginEmail" type="email" autocomplete="username" required></label><label class="f">Пароль<input id="pimLoginPassword" type="password" autocomplete="current-password" required></label><p id="pimLoginError" class="small" role="alert" style="color:var(--bad);min-height:1.2em"></p><div class="row"><button class="btn primary" type="submit">Увійти</button><span class="spacer"></span><a class="small" href="'+esc(productionSiteOrigin()+'/crm/')+'" target="_blank" rel="noopener">Забули пароль? Відкрийте CRM</a></div></form>';
+ document.body.appendChild(box);const form=box.querySelector('form'),error=box.querySelector('#pimLoginError');box.querySelector('#pimLoginEmail').focus();
+ form.addEventListener('submit',async e=>{e.preventDefault();const button=form.querySelector('button');button.disabled=true;error.textContent='';
+  try{const s=await productionStaff('/auth/session');await productionStaff('/auth/login',{method:'POST',csrf:s.meta?.csrf,body:{email:box.querySelector('#pimLoginEmail').value.trim(),password:box.querySelector('#pimLoginPassword').value}});box.remove();resolve(true);}
+  catch(x){error.textContent=x.message||String(x);button.disabled=false;}});
+});}
+async function productionSiteSignIn(){
+ for(;;){
+  const s=await productionStaff('/auth/session');
+  if(s.data?.authenticated){
+   try{const c=await productionStaff('/pim/connection');PRODUCTION_SITE.connection={url:c.data.api_url,key:c.data.pim_key};PRODUCTION_SITE.note='';return true;}
+   catch(e){if(e.status!==401&&e.status!==403)throw e;PRODUCTION_SITE.note=e.status===403?'Цей обліковий запис не має доступу до PIM — увійдіть як власник.':'';}
+  }
+  await productionLoginDialog(PRODUCTION_SITE.note);
+ }
+}
+// The site connection replaces the stored one after the store is ready (persist is paused until then).
+async function productionApplyConnection(){
+ const next=PRODUCTION_SITE.connection;if(PRODUCTION_MIGRATION.state!=='ready'||!next)return false;
+ const c=siteCfg();if(c.url===next.url&&c.key===next.key)return false;
+ S.cfg.siteApi={...c,url:next.url,key:next.key};delete S.cfg.siteApi.keyNext;S.cfgDirty=true;await persist();return true;
+}
+// No owner step: the verified migration runs by itself on the first start of this version (and on a fresh device).
+async function productionAutoMigrate(){
+ PRODUCTION_MIGRATION.busy=true;
+ try{await productionPreview();await productionApply();PRODUCTION_MIGRATION.error='';}
+ catch(e){PRODUCTION_MIGRATION.error=e.message||String(e);if(PRODUCTION_MIGRATION.state!=='blocked')PRODUCTION_MIGRATION.state='pending';}
+ finally{PRODUCTION_MIGRATION.busy=false;}
+}
+const productionBeforeLoad=sbBeforeLoad;sbBeforeLoad=async function(){if(!productionMode())return productionBeforeLoad(...arguments);SB.status='off';await productionSiteSignIn();return true;};
 const productionPull=sbPull;sbPull=async function(){if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')return {changed:0,migration_pending:true};return productionPull(...arguments);};
 const productionPersist=persist;persist=async function(){if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')throw Error('MIGRATION_PENDING: запис призупинено до перевіреної migration');return productionPersist(...arguments);};
-const productionLegacyLoad=load;load=async function(){return productionMode()?productionLoad():productionLegacyLoad(...arguments);};
+const productionLegacyLoad=load;load=async function(){if(!productionMode())return productionLegacyLoad(...arguments);await productionLoad();if(PRODUCTION_MIGRATION.state==='pending')await productionAutoMigrate();await productionApplyConnection();};
 const productionLegacyStartup=startupIntegrityCheck;startupIntegrityCheck=async function(){if(!productionMode())return productionLegacyStartup(...arguments);return {stats:catalogStats(),automatic_repair:false,migration_state:PRODUCTION_MIGRATION.state};};
 const productionLegacyPricing=ensurePricingPolicy;ensurePricingPolicy=async function(){return productionMode()?false:productionLegacyPricing(...arguments);};
 const productionLegacyV10=v10Startup;v10Startup=async function(){if(!productionMode())return productionLegacyV10(...arguments);S.ui.autoIdx=await autoBackupIndex();S.ui.massIdx=await massLogIndex();if(PRODUCTION_MIGRATION.state==='ready'){await dailyBackupTick();setInterval(dailyBackupTick,60*60e3);}return {sync_enabled:false,autoprices_enabled:false};};
@@ -11311,12 +11356,10 @@ async function productionRestoreServer(){if(S.products.size)throw Error('EXISTIN
 const productionSchedulePush=sbSchedulePush;sbSchedulePush=function(){if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')return;return productionSchedulePush(...arguments);};
 const productionPush=sbPush;sbPush=async function(){if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')return {migration_pending:true};return productionPush(...arguments);};
 const productionSiteTick=siteAutoTick;siteAutoTick=function(){return productionMode()?false:productionSiteTick(...arguments);};
-const productionScheduler=workflowSchedulerStart;workflowSchedulerStart=function(){return productionMode()?false:productionScheduler(...arguments);};
-for(const name of ['workflowDownloadSource','workflowFetchSource','workflowRefreshSources']){const old=window[name];window[name]=async function(){if(productionMode())throw Error('AUTOPRICES_DISABLED: потрібен REAL_SOURCE_COMPATIBILITY на справжніх файлах');return old(...arguments);};}
-const productionWorkflowAction=workflowAction;workflowAction=async function(action,t){if(productionMode()&&action==='wfSaveSource'){const panel=$(`[data-source-panel="${CSS.escape(t.dataset.sid)}"]`);if(panel?.querySelector('[data-source-enabled]')?.checked||panel?.querySelector('[data-source-apply]')?.checked)throw Error('AUTOPRICES_DISABLED');}return productionWorkflowAction(...arguments);};
-const productionSourcePanel=workflowSourcePanel;workflowSourcePanel=function(s){const html=productionSourcePanel(s);return productionMode()?'<p class="small">Автопрайси вимкнено до REAL_SOURCE_COMPATIBILITY. Локальні файли можна імпортувати через preview.</p>'+html.replace(/(<input[^>]*data-source-(?:enabled|apply)[^>]*)(>)/g,'$1 disabled$2').replace(/(<button[^>]*data-act="wfFetchSource"[^>]*)(>)/g,'$1 disabled$2'):html;};
+// D-82 (stage 5.6): suppliers by link with auto-refresh — real feeds of all three suppliers were checked (out/stage56-fresh),
+// so source downloads, the refresh schedule and source settings work in production; publishing to the site stays manual.
 // Preserve #main, #topbar and #view across every migration redraw.
-const productionRender=render;render=function(){if(!productionMode())return productionRender(...arguments);if(PRODUCTION_MIGRATION.state==='ready')productionRender(...arguments);else renderNav();const view=$('#view');if(PRODUCTION_MIGRATION.state!=='ready'&&view){const r=PRODUCTION_MIGRATION.lastReport;view.innerHTML='<h1>PIM 10.9.3 — '+(PRODUCTION_MIGRATION.state==='warming-view'?'підготовка інтерфейсу':'міграція існуючої бази')+'</h1><p>Товари: '+S.products.size+'. Доки міграцію не перевірено, запис і cloud push призупинені. Sync магазину й автопрайси вимкнено.</p>'+(!S.products.size?'<p role="alert">У цьому профілі браузера локальний каталог порожній. Відкрийте PIM у тому самому профілі, де збережено ваші товари. Інкогніто й інші профілі мають окрему базу. Не застосовуйте migration до порожньої бази.</p>':'')+(PRODUCTION_MIGRATION.progress?'<p role="status" aria-live="polite">'+esc(PRODUCTION_MIGRATION.progress)+'</p>':'')+(PRODUCTION_MIGRATION.error?'<p>'+esc(PRODUCTION_MIGRATION.error)+'</p>':'')+(!S.products.size&&sbCfg()?'<button class="btn" data-release-action="server-load">Отримати існуючу базу з сервера</button>':'')+'<button class="btn" data-release-action="preview"'+(!S.products.size||PRODUCTION_MIGRATION.busy?' disabled':'')+'>Показати migration dry-run</button>'+(PRODUCTION_MIGRATION.state==='preview'?'<p>Категорії: '+r.categories_before+' → '+r.categories_after+'. SKU: '+r.variants+'. LOST_* = 0. Ціни, фото, stock і manual locks збережено.</p><button class="btn primary" data-release-action="apply">Повна копія файлом + застосувати</button>':'')+'<p><a href="release-recovery.html">Відновлення повної копії / rollback</a>. Порожня нова база не створюється. Фактичні поточні дані перевіряються перед застосуванням. На час міграції закрийте інші вкладки PIM.</p>';}
+const productionRender=render;render=function(){if(!productionMode())return productionRender(...arguments);if(PRODUCTION_MIGRATION.state==='ready')productionRender(...arguments);else renderNav();const view=$('#view');if(PRODUCTION_MIGRATION.state!=='ready'&&view){const r=PRODUCTION_MIGRATION.lastReport;view.innerHTML='<h1>PIM 10.9.3 — '+(PRODUCTION_MIGRATION.state==='warming-view'?'підготовка інтерфейсу':'міграція існуючої бази')+'</h1><p>Товари: '+S.products.size+'. Доки міграцію не перевірено, запис призупинено.</p>'+(PRODUCTION_MIGRATION.progress?'<p role="status" aria-live="polite">'+esc(PRODUCTION_MIGRATION.progress)+'</p>':'')+(PRODUCTION_MIGRATION.error?'<p>'+esc(PRODUCTION_MIGRATION.error)+'</p>':'')+(!S.products.size&&sbCfg()?'<button class="btn" data-release-action="server-load">Отримати існуючу базу з сервера</button>':'')+'<button class="btn" data-release-action="preview"'+(PRODUCTION_MIGRATION.busy?' disabled':'')+'>Показати migration dry-run</button>'+(PRODUCTION_MIGRATION.state==='preview'?'<p>Категорії: '+r.categories_before+' → '+r.categories_after+'. SKU: '+r.variants+'. LOST_* = 0. Ціни, фото, stock і manual locks збережено.</p><button class="btn primary" data-release-action="apply">Застосувати</button>':'')+'<p><a href="release-recovery.html">Відновлення / rollback</a>. Фактичні поточні дані перевіряються перед застосуванням. На час міграції закрийте інші вкладки PIM.</p>';}
  if(S.view==='backup'&&view&&PRODUCTION_MIGRATION.backupId)view.insertAdjacentHTML('afterbegin','<section class="panel"><h2>Migration 10.9.3</h2><p>SYNC_ENABLED=false · AUTOPRICES_ENABLED=false</p><button class="btn" data-release-action="report">Звіт</button><button class="btn" data-release-action="download">Повна копія до міграції</button><button class="btn danger" data-release-action="rollback">Rollback даних до міграції</button></section>');};
 document.addEventListener('click',async e=>{if(!productionMode())return;const b=e.target.closest('[data-release-action]');if(!b)return;e.preventDefault();e.stopImmediatePropagation();if(PRODUCTION_MIGRATION.busy)return;PRODUCTION_MIGRATION.busy=true;try{PRODUCTION_MIGRATION.error='';const a=b.dataset.releaseAction;if(a==='server-load')await productionRestoreServer();else if(a==='preview')await productionPreview();else if(a==='apply')await productionApply();else if(a==='rollback'){if(!confirm('Відновити всю базу до migration? Пізніші правки також відкотяться; перед цим буде збережено повну rescue-копію.'))return;await productionRollback();}else if(a==='download'){const row=await releaseStorage.getBackup(PRODUCTION_MIGRATION.backupId);await offerDownload(row.filename,row.blob);}else if(a==='report')await offerDownload('rubizh-pim-10.9.3-migration-report.json',new Blob([JSON.stringify(PRODUCTION_MIGRATION.lastReport,null,2)],{type:'application/json'}));}catch(error){PRODUCTION_MIGRATION.error=error.message||String(error);if(PRODUCTION_MIGRATION.state==='applying'||PRODUCTION_MIGRATION.state==='backing-up')PRODUCTION_MIGRATION.state='preview';}finally{PRODUCTION_MIGRATION.busy=false;PRODUCTION_MIGRATION.progress='';render();}},true);
 
@@ -11905,7 +11948,8 @@ async function finalCatalogReset(plan,confirmation){
  if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')throw Error('MIGRATION_PENDING: сначала завершите migration');
  if(!plan||plan.signature!==simpleFingerprint())throw Error('STALE_PREVIEW: каталог изменился, повторите предпросмотр');
  let backupInfo;
- if(productionMode()){const backup=await productionBackup(await productionCapture(),'Перед полным сбросом каталога');if(!await productionSaveExternal(backup))throw Error('EXTERNAL_BACKUP_REQUIRED: сброс не выполнен');backupInfo={id:backup.id,sha256:backup.sha256};}
+ // 5.6.2 (owner decision): no backup file is offered; the verified in-browser copy is kept for the rollback below.
+ if(productionMode()){const backup=await productionBackup(await productionCapture(),'Перед полным сбросом каталога');backupInfo={id:backup.id,sha256:backup.sha256};}
  else backupInfo=await requireBatchBackup('Перед полным сбросом каталога');
  const before=fullStateData('До полного сброса каталога');
  try{

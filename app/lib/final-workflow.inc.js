@@ -583,7 +583,8 @@ async function finalCatalogReset(plan,confirmation){
  if(productionMode()&&PRODUCTION_MIGRATION.state!=='ready')throw Error('MIGRATION_PENDING: сначала завершите migration');
  if(!plan||plan.signature!==simpleFingerprint())throw Error('STALE_PREVIEW: каталог изменился, повторите предпросмотр');
  let backupInfo;
- if(productionMode()){const backup=await productionBackup(await productionCapture(),'Перед полным сбросом каталога');if(!await productionSaveExternal(backup))throw Error('EXTERNAL_BACKUP_REQUIRED: сброс не выполнен');backupInfo={id:backup.id,sha256:backup.sha256};}
+ // 5.6.2 (owner decision): no backup file is offered; the verified in-browser copy is kept for the rollback below.
+ if(productionMode()){const backup=await productionBackup(await productionCapture(),'Перед полным сбросом каталога');backupInfo={id:backup.id,sha256:backup.sha256};}
  else backupInfo=await requireBatchBackup('Перед полным сбросом каталога');
  const before=fullStateData('До полного сброса каталога');
  try{
