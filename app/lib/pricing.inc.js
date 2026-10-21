@@ -175,13 +175,16 @@ function calc(p, v, cfg = S.cfg){
   const isBig=bigFrom>0 && payout!=null && payout>=bigFrom;
   // 5.7 (owner D-87): a supplier with «Порог маржи: без порога» is priced by its markup rule only; the price still covers cost,
   // tax and acquiring (minimum margin 0). Every other supplier keeps the general floor.
-  const floorOff=!!ref&&cfg.suppliers.find(s=>s.id===ref.sid)?.terms?.marginFloor==='off';
+  // 5.8 (owner 22.10, all suppliers): the markup goes on the price from the supplier's file — the retail price (РРЦ) when the
+  // price list holds retail prices (Svit: payout = retail − 20 %), else the purchase price; the 25 % big-price rule does not apply.
+  const refTerms=ref&&cfg.suppliers.find(s=>s.id===ref.sid)?.terms||{},floorOff=!!ref&&refTerms.marginFloor==='off';
+  const filePrice=floorOff&&refTerms.priceType==='retail'&&rrp!=null?rrp:payout;
   const minMargin=floorOff?0:isBig?bigMargin:Math.max(0,+cfg.minMargin||30), feePct=Math.max(0,+cfg.taxPct||0)+Math.max(0,+cfg.acquiringPct||0), fixed=Math.max(0,+cfg.deliveryCost||0)+Math.max(0,+cfg.extraCost||0);
   const denom=1-(minMargin+feePct)/100; let minPrice=payout!=null&&denom>0?roundPriceAtLeast108((payout+fixed)/denom,cfg):null;
   if(ref&&rrpRequired(ref.sid,cfg)&&rrp!=null) minPrice=Math.max(minPrice||0,rrp);
   let price=null, manual=false;
   if(+v.price>0){ price=+v.price; manual=true; }
-  else if(payout!=null){ const markupPct=isBig?bigMargin:ruleMarkup(p,ref.sid,cfg); const byRule=roundPrice(payout*(1+markupPct/100),cfg); const base=rrp!=null?rrp:byRule; price=roundPriceAtLeast108(Math.max(base||0,minPrice||0),cfg); }
+  else if(payout!=null){ const markupPct=isBig&&!floorOff?bigMargin:ruleMarkup(p,ref.sid,cfg); const byRule=roundPrice(filePrice*(1+markupPct/100),cfg); const base=rrp!=null&&!floorOff?rrp:byRule; price=roundPriceAtLeast108(Math.max(base||0,minPrice||0),cfg); }
   const grossShare=price!=null&&payout!=null?price-payout:null; const grossMargin=price&&payout!=null?grossShare/price*100:null;
   const fees=price!=null?price*feePct/100+fixed:null; const netProfit=price!=null&&payout!=null?price-payout-fees:null; const netMargin=price&&netProfit!=null?netProfit/price*100:null;
   const avail=o?"in":(preorderOffers.length?"order":"out");
