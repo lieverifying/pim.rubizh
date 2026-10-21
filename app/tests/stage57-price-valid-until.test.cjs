@@ -13,9 +13,14 @@ test('5.7 stock_valid_until goes to SITE only for a manual-price supplier and on
  assert.equal(valid(h,'manual',day(Date.now()-2*D)),null,'a past date sends nothing');
  assert.equal(valid(h,'linked',future),null,'a supplier with a link is unchanged');
  assert.equal(valid(h,'manual',''),null,'no date — nothing');
+ assert.equal(valid(h,'manual','2099-02-31'),null,'not a calendar day');
+ h.run(`S.cfg.suppliers.find(s=>s.id==='manual').disabled=true`);assert.equal(valid(h,'manual',future),null,'a disabled supplier sends nothing');
 });
 test('5.7 import of a manual price sets 30 days by default and never shortens a later date set by hand',()=>{
  const h=harness(),now=Date.now();h.ctx.now=now;
+ // Review: no date set by the owner yet → the import sets nothing (other file suppliers keep the current rule).
+ assert.equal(h.run(`workflowDefaultPriceValidity(S.cfg.suppliers.find(s=>s.id==='manual'),now)`),false);assert.equal(h.run(`S.cfg.suppliers.find(s=>s.id==='manual').terms.priceValidUntil??null`),null);
+ h.ctx.first=day(now+D);h.run(`S.cfg.suppliers.find(s=>s.id==='manual').terms.priceValidUntil=first`);
  assert.equal(h.run(`workflowDefaultPriceValidity(S.cfg.suppliers.find(s=>s.id==='manual'),now)`),true);
  assert.equal(h.run(`S.cfg.suppliers.find(s=>s.id==='manual').terms.priceValidUntil`),day(now+30*D));
  h.ctx.later=day(now+45*D);h.run(`S.cfg.suppliers.find(s=>s.id==='manual').terms.priceValidUntil=later`);

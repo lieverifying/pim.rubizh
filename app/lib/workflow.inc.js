@@ -168,8 +168,10 @@ function workflowPriceValidityNotices(now=Date.now()){
  return (S.cfg.suppliers||[]).filter(s=>!s.disabled&&!s.source?.url&&/^\d{4}-\d{2}-\d{2}$/.test(String(s.terms?.priceValidUntil||''))).map(s=>{const end=new Date(s.terms.priceValidUntil+'T23:59:59').getTime();return {id:s.id,name:s.name,day:s.terms.priceValidUntil,expired:end<now,days:Math.max(0,Math.ceil((end-now)/86400000))};}).filter(x=>x.expired||x.days<=3);
 }
 // Called by applyImport: a manual price file is valid 30 days from its import unless a later date is already set by hand.
+// Review 5.7: only for a supplier whose «Прайс актуальний до» the owner has set once (SHOWER PACK); other file suppliers
+// (M-WIN, UKR-TEC) keep the current freshness rule untouched.
 function workflowDefaultPriceValidity(sup,now=Date.now()){
- if(!sup||sup.source?.url)return false;
+ if(!sup||sup.source?.url||!sup.terms?.priceValidUntil)return false;
  const d=new Date(now+30*86400000),day=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
  sup.terms={...(sup.terms||{})};if(sup.terms.priceValidUntil>=day)return false;sup.terms.priceValidUntil=day;return true;
 }

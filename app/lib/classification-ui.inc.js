@@ -242,8 +242,11 @@ function classificationStockMetadata(o){
 // the end of that day; a past date or a supplier with a link sends nothing, so the current freshness rule applies.
 function classificationPriceValidUntil(o){
  const s=S.cfg.suppliers.find(x=>x.id===o?.sid),day=String(s?.terms?.priceValidUntil||'');
- if(!s||s.source?.url||!/^\d{4}-\d{2}-\d{2}$/.test(day))return null;
- const end=new Date(day+'T23:59:59').getTime();return Number.isFinite(end)&&end>=Date.now()?end:null;
+ if(!s||s.disabled||s.source?.url||!/^\d{4}-\d{2}-\d{2}$/.test(day))return null;
+ const d=new Date(day+'T23:59:59'),end=d.getTime();
+ // Review: a real calendar day only (2026-02-31 rolls over in Date and is refused).
+ if(!Number.isFinite(end)||d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')!==day)return null;
+ return end>=Date.now()?end:null;
 }
 const classificationLegacyOfferStale=offerStale;
 offerStale=function(o,cfg=S.cfg){return classificationReviewMode()||classificationEnabled()?false:classificationLegacyOfferStale(o,cfg);};
