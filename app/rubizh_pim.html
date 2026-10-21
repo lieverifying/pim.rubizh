@@ -11306,7 +11306,9 @@ async function productionRollback(id=PRODUCTION_MIGRATION.backupId){
 // credentials) and takes the API address and its key from /api/staff/pim/connection (OWNER); the owner never types the key.
 const productionSbCfg=sbCfg;sbCfg=function(){return productionMode()?null:productionSbCfg(...arguments);};
 const PRODUCTION_SITE={connection:null,note:''};
-function productionSiteOrigin(){const h=location.hostname||'';if(/^pim\./i.test(h))return location.protocol+'//'+h.slice(4)+(location.port?':'+location.port:'');try{if(siteCfg().url)return new URL(siteCfg().url).origin;}catch{}return 'https://rubizh.shop';}
+// Review 5.6.2: the password and the session go to this one origin only — never to an address taken from stored data.
+const PRODUCTION_SITE_ORIGIN='https://rubizh.shop';
+function productionSiteOrigin(){return PRODUCTION_SITE_ORIGIN;}
 async function productionStaff(path,{method='GET',body,csrf}={}){
  let r;try{r=await fetch(productionSiteOrigin()+'/api/staff'+path,{method,credentials:'include',headers:{...(body?{'Content-Type':'application/json'}:{}),...(csrf?{'X-CSRF-Token':csrf}:{})},body:body?JSON.stringify(body):undefined});}
  catch{throw Object.assign(Error('Немає зв’язку з сайтом. Перевірте інтернет і спробуйте ще раз.'),{code:'NETWORK'});}
@@ -11326,7 +11328,10 @@ async function productionSiteSignIn(){
  for(;;){
   const s=await productionStaff('/auth/session');
   if(s.data?.authenticated){
-   try{const c=await productionStaff('/pim/connection');PRODUCTION_SITE.connection={url:c.data.api_url,key:c.data.pim_key};PRODUCTION_SITE.note='';return true;}
+   try{const c=await productionStaff('/pim/connection');let origin='';try{origin=new URL(String(c.data?.api_url||'')).origin;}catch{}
+    // The key is sent as Bearer to this address — accept it only on the same site.
+    if(origin!==PRODUCTION_SITE_ORIGIN||typeof c.data?.pim_key!=='string'||c.data.pim_key.length<24)throw Object.assign(Error('Сайт повернув неправильне підключення PIM.'),{code:'PIM_CONNECTION_INVALID'});
+    PRODUCTION_SITE.connection={url:c.data.api_url,key:c.data.pim_key};PRODUCTION_SITE.note='';return true;}
    catch(e){if(e.status!==401&&e.status!==403)throw e;PRODUCTION_SITE.note=e.status===403?'Цей обліковий запис не має доступу до PIM — увійдіть як власник.':'';}
   }
   await productionLoginDialog(PRODUCTION_SITE.note);

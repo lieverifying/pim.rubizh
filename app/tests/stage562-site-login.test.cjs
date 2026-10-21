@@ -7,7 +7,7 @@ const {createHarness,appRequire}=require('./isolated-harness.cjs');
 const {Event}=appRequire('linkedom').parseHTML('<html></html>');
 const KEY='pim-key-from-the-site-0123456789abcdef';
 
-function staffSite(h,{role='OWNER'}={}){
+function staffSite(h,{role='OWNER',apiUrl='https://rubizh.shop/api'}={}){
  const calls=[];let signedIn=false;
  h.ctx.location.hostname='pim.rubizh.shop';h.ctx.location.protocol='https:';h.ctx.location.port='';
  h.ctx.fetch=async(url,opt={})=>{
@@ -16,7 +16,7 @@ function staffSite(h,{role='OWNER'}={}){
   const path=String(url).replace('https://rubizh.shop/api/staff','');
   if(path==='/auth/session')return json(200,{authenticated:signedIn,user:signedIn?{role}:null,totp_required:false});
   if(path==='/auth/login'){const b=JSON.parse(opt.body);if(b.email==='owner@example.com'&&b.password==='correct horse battery'){signedIn=true;return json(200,{ok:true});}return json(401,{code:'LOGIN_FAILED',message:'Перевірте email і пароль.'});}
-  if(path==='/pim/connection')return !signedIn?json(401,{code:'AUTH_REQUIRED',message:'Увійдіть.'}):role!=='OWNER'?json(403,{code:'PERMISSION_DENIED',message:'Недостатньо прав для цієї дії.'}):json(200,{api_url:'https://rubizh.shop/api',pim_key:KEY});
+  if(path==='/pim/connection')return !signedIn?json(401,{code:'AUTH_REQUIRED',message:'Увійдіть.'}):role!=='OWNER'?json(403,{code:'PERMISSION_DENIED',message:'Недостатньо прав для цієї дії.'}):json(200,{api_url:apiUrl,pim_key:KEY});
   throw Error('unexpected '+url);
  };
  return calls;
@@ -55,4 +55,7 @@ test('5.6.2 an already signed-in owner opens PIM without the form; a non-owner a
  const m=createHarness({runtime:true,production:true});staffSite(m,{role:'MANAGER'});await signIn(m);
  m.run('sbBeforeLoad()');const box=await form(m);
  assert.match(box.textContent,/власник/,'a manager gets no PIM key');assert.equal(m.run('PRODUCTION_SITE.connection'),null);
+ // Review 5.6.2: an API address on another origin is refused — the key is never sent elsewhere.
+ const x=createHarness({runtime:true,production:true});staffSite(x,{apiUrl:'https://evil.example/api'});await signIn(x);
+ await assert.rejects(x.run('sbBeforeLoad()'),/неправильне підключення/);assert.equal(x.run('PRODUCTION_SITE.connection'),null);
 });
