@@ -2,7 +2,8 @@
 // Business rules stay in the decision/export functions below; screens only read their cached results.
 const FINAL_WORKFLOW_VERSION=1;
 const PIM_SITE_CONTRACT=Object.freeze({contract_version:3,pricing_policy_version:1,category_catalog_version:2,size_catalog_version:1,inventory_policy_version:1,order_policy_version:1,model_colors_version:1,envelope:'products'});
-const FINAL_VIEWS=[['ready','НА САЙТ'],['moderation','МОДЕРАЦИЯ'],['rejected','НЕ ПРОХОДИТ'],['import','ИМПОРТ'],['backup','BACKUP']];
+// 5.8 (owner 22.10): the supplier terms, price rules and «Відбір для сайту» screens had no menu entry in production.
+const FINAL_VIEWS=[['ready','НА САЙТ'],['siteSelect','ВІДБІР ДЛЯ САЙТУ'],['moderation','МОДЕРАЦИЯ'],['rejected','НЕ ПРОХОДИТ'],['import','ИМПОРТ'],['suppliers','ПОСТАВЩИКИ'],['prices','ЦЕНЫ'],['backup','BACKUP']];
 const FINAL_UI={q:'',category:'',availability:'',page:0,rejectedCode:'',busy:false,hashes:null,lastPublish:null};
 const FINAL_REJECT_TEXT={
  UNRESOLVABLE_PRODUCT:['Нет ни одного реального SKU','Карточку нельзя продать: у модели нет вариантов.'],
