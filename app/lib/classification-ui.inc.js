@@ -234,8 +234,16 @@ function classificationPermissions(availability){
 // No time at all → no age → sold only after the manager confirms (fail closed).
 function classificationStockMetadata(o){
  const observed=classificationSourceTimestamp(classificationObservedAt(o)),fileTime=classificationSourceTimestamp(o?.source_generated_at),updated=classificationSourceTimestamp(o?.source_updated_at),basis=observed??fileTime,age=basis?Math.max(0,(Date.now()-basis)/3600000):null;
- const expires=classificationSourceTimestamp(o?.expires_at,true);
- return {stock_observed_at:observed,stock_imported_at:fileTime,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires};
+ const expires=classificationSourceTimestamp(o?.expires_at,true),validUntil=classificationPriceValidUntil(o);
+ // stock_valid_until is sent only when set, so the wire of every other supplier stays byte-identical.
+ return {stock_observed_at:observed,stock_imported_at:fileTime,source_updated_at:updated,stock_data_age_hours:age,stale_source:age!=null&&age>classificationFreshnessHours(),stock_warning_hours:classificationFreshnessHours(),expires_at:expires,...(validUntil!=null?{stock_valid_until:validUntil}:{})};
+}
+// 5.7 (owner ТЗ 2.2): «Прайс актуальний до» of a supplier without a link (manual price file). SITE keeps its SKUs fresh until
+// the end of that day; a past date or a supplier with a link sends nothing, so the current freshness rule applies.
+function classificationPriceValidUntil(o){
+ const s=S.cfg.suppliers.find(x=>x.id===o?.sid),day=String(s?.terms?.priceValidUntil||'');
+ if(!s||s.source?.url||!/^\d{4}-\d{2}-\d{2}$/.test(day))return null;
+ const end=new Date(day+'T23:59:59').getTime();return Number.isFinite(end)&&end>=Date.now()?end:null;
 }
 const classificationLegacyOfferStale=offerStale;
 offerStale=function(o,cfg=S.cfg){return classificationReviewMode()||classificationEnabled()?false:classificationLegacyOfferStale(o,cfg);};

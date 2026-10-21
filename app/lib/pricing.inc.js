@@ -173,7 +173,10 @@ function calc(p, v, cfg = S.cfg){
   const bigFrom=+cfg.bigPriceFrom||0, bigMargin=Math.max(0,+cfg.bigPriceMargin||0);
   // The supplier payout determines the threshold; RRP may raise the final price.
   const isBig=bigFrom>0 && payout!=null && payout>=bigFrom;
-  const minMargin=isBig?bigMargin:Math.max(0,+cfg.minMargin||30), feePct=Math.max(0,+cfg.taxPct||0)+Math.max(0,+cfg.acquiringPct||0), fixed=Math.max(0,+cfg.deliveryCost||0)+Math.max(0,+cfg.extraCost||0);
+  // 5.7 (owner D-87): a supplier with «Порог маржи: без порога» is priced by its markup rule only; the price still covers cost,
+  // tax and acquiring (minimum margin 0). Every other supplier keeps the general floor.
+  const floorOff=!!ref&&cfg.suppliers.find(s=>s.id===ref.sid)?.terms?.marginFloor==='off';
+  const minMargin=floorOff?0:isBig?bigMargin:Math.max(0,+cfg.minMargin||30), feePct=Math.max(0,+cfg.taxPct||0)+Math.max(0,+cfg.acquiringPct||0), fixed=Math.max(0,+cfg.deliveryCost||0)+Math.max(0,+cfg.extraCost||0);
   const denom=1-(minMargin+feePct)/100; let minPrice=payout!=null&&denom>0?roundPriceAtLeast108((payout+fixed)/denom,cfg):null;
   if(ref&&rrpRequired(ref.sid,cfg)&&rrp!=null) minPrice=Math.max(minPrice||0,rrp);
   let price=null, manual=false;
